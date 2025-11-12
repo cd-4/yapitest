@@ -45,10 +45,11 @@ def check_token() -> None:
 
 class SampleUser:
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, password: str):
         self.name = name
         self.id = len(USERS_BY_ID) + 1
         self.token = generate_token()
+        self.password = password
         self.posts = []
         USERS_BY_ID[user_id] = self
         USERS_BY_TOKEN[token] = self
@@ -66,7 +67,7 @@ class SampleUser:
 
     @staticmethod
     def random():
-        return SampleUser(random_username())
+        return SampleUser(random_username(), random_string())
 
 
 class SamplePost:
@@ -103,8 +104,17 @@ def create_user():
         return jsonify({"error": "Request must be JSON"})
     data = request.get_json()
     username = data["username"]
-    token = SampleUser(username).token
+    password = data["password"]
+    token = SampleUser(username, password).token
     return {"token": token}
+
+
+@app.route("/api/token/check", methods=["POST"])
+def check_token():
+    if not request.is_json:
+        return jsonify({"error": "Request must be JSON"})
+    data = request.get_json()
+    return {"success": token in USERS_BY_TOKEN}
 
 
 @app.route("/api/user/list", methods=["GET"])

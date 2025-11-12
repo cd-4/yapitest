@@ -1,0 +1,27 @@
+
+test-create-user:
+  steps:
+    - id: create-user
+      path: /api/user/create
+      method: POST
+      data:
+        username: $vars.sample-user
+        password: $vars.sample-password
+      return-code: 200
+
+    - id: check-token
+      path: /api/token/check
+      method: POST
+      headers:
+        API-Token: $create-user.response.token
+      return-code: 200
+
+    - id: check-bad-token
+      path: /api/token/check
+      method: POST
+      headers:
+        API-TOKEN: asdf23
+      return-code: 403
+
+
+
