@@ -1,5 +1,16 @@
 import os
 from pathlib import Path
+from typing import Optional
+from ruamel.yaml import YAML
+from utils.dict_wrapper import DictWrapper
+
+yaml = YAML(typ="safe")
+
+
+class VariableNotDefinedException(Exception):
+    def __init__(self, var_name):
+        self.message = f"Variable not defined: {var_name}"
+        super().__init__(self.message)
 
 
 class YapConfig:
@@ -20,21 +31,41 @@ class YapConfig:
     def find_config():
         cwd = Path(os.getcwd())
         found_config = YapConfig.find_config_in_dir(cwd)
+        if found_config:
+            return YapConfig(found_config)
         while found_config is None:
             cwd = cwd.parent
             found_config = YapConfig.find_config_in_dir(cwd)
             if found_config:
-                return found_config
+                return YapConfig(found_config)
 
             for root_marker in YapConfig.ROOT_MARKERS:
                 root_check = cwd / root_marker
                 if root_check.exists():
-                    return None
-        return None
+                    return YapConfig()
+        return YapConfig()
 
-    def __init__(self, config_file: Path):
-        pass
+    def __init__(self, config_file: Optional[Path] = None):
+        self.config_data = {}
+        if config_file:
+            print(f"Using Config: {config_file}")
+            self.config_data = yaml.load(config_file)
 
+        self.vars = self.config_data.get("variables")
+        self.urls = DictWrapper(self.config_data.get("urls", {}), self)
 
-if __name__ == "__main__":
-    YapConfig.find_config()
+    def get_variable(self, var_name):
+        if var_name not in self.vars:
+            raise VariableNotDefinedException(var_name)
+
+        var_data = self.vars[var_name]
+        if isinstance(var_data, dict):
+            if "env" in var_data:
+                var_env = var_data["env"]
+                output = os.getenv(var_env, var_data.get("default"))
+                if output is None:
+                    raise VariableNotDefinedException(var_name)
+                return output
+
+        else:
+            return str(var_data)

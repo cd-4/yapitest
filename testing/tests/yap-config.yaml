@@ -11,5 +11,5 @@ variables:
     default: p4ssw0rd123!
 
 urls:
-  api: vars.base_url
+  api: $vars.base_url
 
