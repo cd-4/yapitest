@@ -22,7 +22,7 @@ class TestFile:
         data = load_yaml(self.path)
         for key, test_data in data.items():
             if is_test(key):
-                tests.append(ApiTest(self, test_data))
+                tests.append(ApiTest(self, key, test_data))
         return tests
 
     def _get_readable_path(self):
@@ -31,3 +31,6 @@ class TestFile:
 
     def __repr__(self):
         return f"TestFile: {self._get_readable_path()}"
+
+    def __str__(self):
+        return self.__repr__(self)
