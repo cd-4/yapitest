@@ -1,21 +1,23 @@
 from config import YapConfig
 from pathlib import Path
 from argparse import ArgumentParser
-from typing import List, Optional
+from discover import TestDiscoverer
 
 
 class YapProject:
 
-    def __init__(self, test_paths: Optional[List[str]] = None):
-        if test_paths is None:
-            test_paths = []
+    def __init__(self, args):
+        self.args = args
         self.config = YapConfig.find_config()
-        self.test_paths = test_paths
-
-    def discover_tests(self):
-        pass
+        self.discoverer = TestDiscoverer(
+            args.test_paths,
+            args.group,
+            args.exclude,
+            args.include,
+        )
 
     def run(self):
+        tests = self.discoverer.find_tests()
         pass
 
 
@@ -55,5 +57,5 @@ def get_parser():
 
 if __name__ == "__main__":
     args = get_parser().parse_args()
-    project = YapProject(args.test_paths)
+    project = YapProject(args)
     project.run()

@@ -1,10 +1,8 @@
 import os
 from pathlib import Path
 from typing import Optional
-from ruamel.yaml import YAML
+from utils.yaml import load_yaml
 from utils.dict_wrapper import DictWrapper
-
-yaml = YAML(typ="safe")
 
 
 class VariableNotDefinedException(Exception):
@@ -49,7 +47,7 @@ class YapConfig:
         self.config_data = {}
         if config_file:
             print(f"Using Config: {config_file}")
-            self.config_data = yaml.load(config_file)
+            self.config_data = load_yaml(config_file)
 
         self.vars = self.config_data.get("variables")
         self.urls = DictWrapper(self.config_data.get("urls", {}), self)
