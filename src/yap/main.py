@@ -18,8 +18,8 @@ class YapProject:
 
     def run(self):
         tests = self.discoverer.find_tests()
-        print(tests)
-        pass
+        for test in tests:
+            test.run()
 
 
 def get_parser():
