@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from typing import Optional
 from utils.yaml import load_yaml
-from utils.dict_wrapper import DictWrapper
+from utils.dict_wrapper import VariableDictWrapper
 
 
 class VariableNotDefinedException(Exception):
@@ -50,7 +50,7 @@ class YapConfig:
             self.config_data = load_yaml(config_file)
 
         self.vars = self.config_data.get("variables")
-        self.urls = DictWrapper(self.config_data.get("urls", {}), self)
+        self.urls = VariableDictWrapper(self.config_data.get("urls", {}), self)
 
     def get_variable(self, var_name):
         if var_name not in self.vars:

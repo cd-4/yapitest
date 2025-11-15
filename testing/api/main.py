@@ -110,7 +110,7 @@ def create_user():
 
 
 @app.route("/api/token/check", methods=["POST"])
-def check_token():
+def check_token_endpoint():
     if not request.is_json:
         return jsonify({"error": "Request must be JSON"})
     data = request.get_json()

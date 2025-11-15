@@ -1,4 +1,4 @@
-class DictWrapper:
+class VariableDictWrapper:
 
     VAR_PREFIX = "$vars."
 
@@ -14,7 +14,18 @@ class DictWrapper:
     def __getitem__(self, key):
         value = self.data.__getitem__(key)
         if isinstance(value, str):
-            if value.startswith(DictWrapper.VAR_PREFIX):
-                var_name = value[len(DictWrapper.VAR_PREFIX) :]
+            if value.startswith(VariableDictWrapper.VAR_PREFIX):
+                var_name = value[len(VariableDictWrapper.VAR_PREFIX) :]
                 return self.config.get_variable(var_name)
         return output
+
+
+def flatten_dict(d, parent_key="", sep="."):
+    items = []
+    for k, v in d.items():
+        new_key = parent_key + sep + k if parent_key else k
+        if isinstance(v, dict):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
