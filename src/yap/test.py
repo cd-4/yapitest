@@ -169,10 +169,6 @@ class ApiTestStep:
 
         data = self.sanitize(self.data)
 
-        print("Headers:")
-        print(headers)
-        print("Body:")
-        print(data)
         response = method(self.url + self.path, json=data, headers=headers)
         self.response_data = response.json()
         self.perform_assertions(response)

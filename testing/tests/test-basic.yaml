@@ -15,8 +15,8 @@ test-create-user:
     - id: check-token
       path: /api/token/check
       method: POST
-      headers:
-        API-Token: $create-user.response.token
+      #headers:
+      #  API-Token: $create-user.response.token
       data:
         token: $create-user.response.token
       assert:
@@ -24,13 +24,11 @@ test-create-user:
         body:
           success: true
 
-
-
     - id: check-bad-token
       path: /api/token/check
       method: POST
-      headers:
-        API-TOKEN: asdf23
+      data:
+        token: asdf234
       assert:
         status-code: 200
         body:
