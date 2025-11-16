@@ -168,7 +168,6 @@ class ApiTestStep:
             headers[header] = self.sanitize(value)
 
         data = self.sanitize(self.data)
-
         response = method(self.url + self.path, json=data, headers=headers)
         self.response_data = response.json()
         self.perform_assertions(response)
@@ -295,7 +294,6 @@ class ApiTest:
 
         for step in self.test_steps:
             self.current_step = step
-            print("------------")
             step.run()
             step.is_complete = True
             if step.should_exit:
