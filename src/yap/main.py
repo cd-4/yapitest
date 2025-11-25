@@ -1,8 +1,7 @@
 from config import YapConfig
 from pathlib import Path
 from argparse import ArgumentParser
-from discover import TestDiscoverer
-from setups import TestSetupFinder
+from find.test_finder import TestDiscoverer
 
 
 class YapProject:
@@ -10,7 +9,6 @@ class YapProject:
     def __init__(self, args):
         self.args = args
         self.config = YapConfig.find_config()
-        self.setups = TestSetupFinder().find_setups(args.test_paths)
         self.discoverer = TestDiscoverer(
             args.test_paths,
             args.group,
@@ -18,6 +16,7 @@ class YapProject:
             args.include,
             self.config,
         )
+        # self.setups = TestSetupFinder().find_setups(args.test_paths)
 
     def run(self):
         tests = self.discoverer.find_tests()

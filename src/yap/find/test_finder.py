@@ -4,6 +4,7 @@ from pathlib import Path
 from utils.yaml import is_test_file
 from testfile import TestFile
 from test import ApiTest
+from find.finder import find_test_files
 
 
 class TestDiscoverer:
@@ -43,6 +44,8 @@ class TestDiscoverer:
         return test_files
 
     def find_test_files(self) -> List[TestFile]:
+        raise Exception(find_test_files(self.search_paths))
+
         test_files = []
         for path in self.search_paths:
             if path.is_dir():
