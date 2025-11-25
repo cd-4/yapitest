@@ -2,6 +2,7 @@ from config import YapConfig
 from pathlib import Path
 from argparse import ArgumentParser
 from discover import TestDiscoverer
+from setups import TestSetupFinder
 
 
 class YapProject:
@@ -9,6 +10,7 @@ class YapProject:
     def __init__(self, args):
         self.args = args
         self.config = YapConfig.find_config()
+        self.setups = TestSetupFinder().find_setups(args.test_paths)
         self.discoverer = TestDiscoverer(
             args.test_paths,
             args.group,

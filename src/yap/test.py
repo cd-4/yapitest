@@ -169,7 +169,6 @@ class ApiTestStep:
 
         data = self.sanitize(self.data)
         response = method(self.url + self.path, json=data, headers=headers)
-        self.response_data = response.json()
         self.perform_assertions(response)
 
     def add_assertion(self, assertion: Assertion) -> None:
@@ -191,6 +190,7 @@ class ApiTestStep:
     def assert_body(self, response):
         if "body" not in self.assertions:
             return
+        self.response_data = response.json()
 
         body_assertions = flatten_dict(self.assertions["body"])
         response_body = flatten_dict(response.json())
@@ -289,7 +289,14 @@ class ApiTest:
             self.steps_by_id[step.id] = step
             self.test_steps.append(step)
 
+    def run_test_setup(self):
+        if "setup" in self.data:
+            setup_key = self.data["setup"]
+            raise Exception(setup_key)
+
     def run(self):
+        print(f"Running Test: {self}")
+        self.run_test_setup()
         self.generate_steps()
 
         for step in self.test_steps:

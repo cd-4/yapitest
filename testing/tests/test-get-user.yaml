@@ -1,0 +1,13 @@
+test-get-user:
+  setup: create-user
+  steps:
+    - path: /api/user
+      method: GET
+      headers:
+        API-Token: $setup.create-user.token
+      assert:
+        body:
+          name: $setup.create-user.username
+
+
+

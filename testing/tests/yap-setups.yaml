@@ -1,0 +1,19 @@
+setups:
+  create-user:
+    vars:
+      username: $random.username
+      password: $random.password
+    steps:
+      - id: create-user
+        path: /api/user/create
+        method: POST
+        data:
+          username: $vars.username
+          password: $vars.password
+      output:
+        username: $vars.username
+        password: $vars.password
+        token: $create-user.response.token
+
+
+
