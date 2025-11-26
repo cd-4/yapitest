@@ -40,4 +40,4 @@ def find_test_files(search_paths: List[Path]):
 
 
 def find_config_files(search_paths: List[Path]):
-    return find_files(search_paths: is_config_file)
+    return find_files(search_paths, is_config_file)

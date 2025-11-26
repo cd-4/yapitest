@@ -12,3 +12,8 @@ dynamic = ["version", "description"]
 dependencies = [
     "ruamel.yaml"
 ]
+
+[tool.pytest.ini_options]
+pythonpath = "./src"
+# or relative (works from project root):
+# pythonpath = "src"
