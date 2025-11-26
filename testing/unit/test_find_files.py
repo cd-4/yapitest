@@ -37,6 +37,7 @@ def prepare_test_dir():
                 "files": [
                     "test_one.yaml",
                     "test-one.yaml",
+                    "config.yaml",
                 ],
             },
             "two": {
@@ -49,14 +50,15 @@ def prepare_test_dir():
                         "files": [
                             "three_test.yml",
                             "three-test.yml",
+                            "config.yml",
                         ],
                     },
                     "sub2": {
                         "files": [
                             "four_tests.yml",
-                            "four_tests.yml",
+                            "four-tests.yml",
                             "five-tests.yaml",
-                            "five-tests.yaml",
+                            "five_tests.yaml",
                         ],
                     },
                 },
@@ -76,5 +78,24 @@ def prepare_test_dir():
 def test_find_files():
 
     with prepare_test_dir() as test_dir:
+        root_dir = str(test_dir)
         found_files = finder.find_test_files([test_dir])
-        assert found_files == []
+        strpaths = [str(x)[len(root_dir) :] for x in found_files]
+
+        expected_paths = [
+            "/one/subdir-one/test_one.yml",
+            "/one/subdir-one/test-one.yml",
+            "/one/test-one.yaml",
+            "/one/test_one.yaml",
+            "/two/sub/three_test.yml",
+            "/two/sub/three-test.yml",
+            "/two/sub2/four-tests.yml",
+            "/two/sub2/four_tests.yml",
+            "/two/sub2/five_tests.yaml",
+            "/two/sub2/five-tests.yaml",
+            "/two/two-test.yaml",
+            "/two/two_test.yaml",
+        ]
+        assert len(strpaths) == len(expected_paths)
+        for ex in expected_paths:
+            assert ex in strpaths

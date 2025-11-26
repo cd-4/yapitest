@@ -56,6 +56,7 @@ class TestDiscoverer:
 
     def find_tests(self) -> List[ApiTest]:
         test_files = self.find_test_files()
+        raise Exception(test_files)
         tests = []
         for tf in test_files:
             tests.extend(tf.find_tests())
