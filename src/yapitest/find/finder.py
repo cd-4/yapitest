@@ -18,12 +18,7 @@ def find_files(search_paths: List[Path], is_valid: Callable[Path, bool]) -> List
                 if is_valid(file_path):
                     output_files.append(file_path)
 
-            # if dirnames:
-            # subdir_paths = [dir_path / d for d in dirnames]
-            # output_files.extend(find_files(subdir_paths, is_valid=is_valid))
-
     return output_files
-    # return list(set(output_files))
 
 
 def is_test_file(file: Path):
@@ -32,7 +27,7 @@ def is_test_file(file: Path):
 
 
 def is_config_file(file: Path):
-    valid_config_file_re = r"^config.ya?ml$"
+    valid_config_file_re = r"^(yapitest-)?config.ya?ml$"
     return re.match(valid_config_file_re, file.name)
 
 

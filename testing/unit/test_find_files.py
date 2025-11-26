@@ -65,8 +65,8 @@ def prepare_test_dir():
             },
         },
         "files": [
-            "yap-config.yaml",
-            "yap-config.yml",
+            "yapitest-config.yaml",
+            "yapitest-config.yml",
         ],
     }
 
@@ -95,6 +95,23 @@ def test_find_files():
             "/two/sub2/five-tests.yaml",
             "/two/two-test.yaml",
             "/two/two_test.yaml",
+        ]
+        assert len(strpaths) == len(expected_paths)
+        for ex in expected_paths:
+            assert ex in strpaths
+
+
+def test_find_configs():
+    with prepare_test_dir() as test_dir:
+        root_dir = str(test_dir)
+        found_files = finder.find_config_files([test_dir])
+        strpaths = [str(x)[len(root_dir) :] for x in found_files]
+
+        expected_paths = [
+            "/yapitest-config.yml",
+            "/yapitest-config.yaml",
+            "/one/config.yaml",
+            "/two/sub/config.yml",
         ]
         assert len(strpaths) == len(expected_paths)
         for ex in expected_paths:
