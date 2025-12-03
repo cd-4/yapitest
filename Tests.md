@@ -8,13 +8,19 @@ Here is an example:
 # test-basic.yaml
 
 test-create-user:
+  groups:
+    - pull-request
+    - prod-safe
+  config:
+    vars:
+      example-password: ASDF123
   steps:
     - id: create-user
       path: /api/user/create
       method: POST
       data:
         username: $vars.sample-user
-        password: $vars.sample-password
+        password: $vars.example-password
       assert:
         status-code: 200
         body:
@@ -41,9 +47,24 @@ test-create-user:
         status-code: 200
         body:
           success: false
+
+test-something-else:
+...
 ```
 
+### `groups`
+
+Tests can have `groups` defined which can be used to select what tests are run by using the `-g/--group` flags. This is useful when you have many tests that need to be run in certain contexts. For example, you may have tests that simulat the purchasing of products that are safe to run in the staging environment but not in production, for this reason, you could tag the `group` with a `staging` tag for CI runs. Then when you run in production, the tests tagged with `production` and **not** `staging` would run keeping your production environment safe.
+
+### `config`
+
+Test can also define a `config` section, which matches the same structure as the [Config.md](./Configs.md). This will take priority over other configs.
+
+
+
 ## Test Steps
+
+The most important section of a test is the `steps` section, which defines all of the API requests that will be sent to the API in question. Below are the fields that can be used within a test step.
 
 ### `id` [optional]
 
