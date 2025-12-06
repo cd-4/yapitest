@@ -33,11 +33,11 @@ class ConfigData:
             self.var_cache[var_name] = var_value
         return self.var_cache[var_name]
 
-    def get_url(self, url: str) -> Optional[Any]:
+    def get_url(self, url_name: str) -> Optional[Any]:
         if url_name not in self.url_cache:
             url_value = self._get_url_inner(url_name)
-            self.var_cache[var_name] = var_value
-        return self.var_cache[var_name]
+            self.var_cache[url_name] = url_value
+        return self.var_cache[url_name]
 
     def _get_url_inner(self, url_name: str) -> Optional[str]:
         if url_name not in self.url_data:

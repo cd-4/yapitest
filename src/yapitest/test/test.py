@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Dict, List
 from test.config import ConfigData, ConfigSet
+from test.step import TestStep
 
 
 class Test:
@@ -15,5 +16,15 @@ class Test:
             configs.append(ConfigData(self.file, test_config))
         self.config_set = ConfigSet(configs)
 
+    def get_steps(self):
+        steps_data = self.raw_data.get("steps", [])
+        steps = []
+        for sd in steps_data:
+            new_step = TestStep(len(steps) + 1, sd, self.config_set)
+            steps.append(new_step)
+        return steps
+
     def run(self):
-        pass
+        steps = self.get_steps()
+        for step in steps:
+            step.run()
