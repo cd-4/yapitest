@@ -1,8 +1,8 @@
 from pathlib import Path
 from argparse import ArgumentParser
 from find.finder import find_test_files, find_config_files
-from test.file import TestFile
 from test.config import ConfigFile
+from test.file import TestFile
 
 
 class YapProject:
@@ -12,24 +12,25 @@ class YapProject:
         # self.config = YapConfig.find_config()
         self.configs = self.find_configs()
         self.tests = self.find_tests()
-        """
-        self.discoverer = TestDiscoverer(
-            args.test_paths,
-            args.group,
-            args.exclude,
-            args.include,
-            self.config,
-        )
-        """
-        # self.setups = TestSetupFinder().find_setups(args.test_paths)
 
     def run(self):
         for test in self.tests:
-            test.set_configs(self.configs)
             test.run()
 
     def find_tests(self):
-        test_files = [TestFile(tf) for tf in find_test_files(self.args.test_paths)]
+        test_files = []
+
+        for file in find_test_files(self.args.test_paths):
+            configs = []
+            for config in self.configs:
+                config_dir = config.path.parent
+                if file.is_relative_to(config_dir):
+                    configs.append(config)
+
+            configs.sort(key=lambda x: len(str(x.path)))
+            test_file = TestFile(file, configs)
+            test_files.append(test_file)
+
         # TODO: Filter Test Files
 
         all_tests = []
@@ -42,7 +43,7 @@ class YapProject:
 
     def find_configs(self):
         all_configs = find_config_files(self.args.test_paths)
-        configs = [ConfigFile(cf) for cf in all_configs]
+        configs = [ConfigFile(cf).get_data() for cf in all_configs]
         return configs
 
 
