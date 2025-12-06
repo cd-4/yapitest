@@ -1,8 +1,8 @@
 import os
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from pathlib import Path
 from utils.yaml import YamlFile
-from test.step import TestStep
+from test.step import TestStep, ReusableStepGroup
 
 
 class ConfigData:
@@ -24,6 +24,47 @@ class ConfigData:
             step_groups[step_group_key] = new_group
         self.step_groups = step_groups
 
+        self.var_cache = {}
+        self.url_cache = {}
+
+    def get_variable(self, var_name: str) -> Optional[Any]:
+        if var_name not in self.var_cache:
+            var_value = self._get_variable_inner(var_name)
+            self.var_cache[var_name] = var_value
+        return self.var_cache[var_name]
+
+    def get_url(self, url: str) -> Optional[Any]:
+        if url_name not in self.url_cache:
+            url_value = self._get_url_inner(url_name)
+            self.var_cache[var_name] = var_value
+        return self.var_cache[var_name]
+
+    def _get_url_inner(self, url_name: str) -> Optional[str]:
+        if url_name not in self.url_data:
+            return None
+        url_value = self.url_data[url_name]
+        return self._get_value(url_value)
+
+    def _get_variable_inner(self, var_name: str) -> Optional[Any]:
+        if var_name not in self.var_data:
+            return None
+        var_value = self.var_data[var_name]
+        return self._get_value(var_value)
+
+    def _get_value(self, data: Any) -> Any:
+        # If the value is a dict, try to get env var, then use default
+        if isinstance(data, dict):
+            env_var_name = data.get("env")
+            if env_var_name is not None:
+                env_var_value = os.getenv(env_var_name)
+                if env_var_value is not None:
+                    return env_var_value
+            default_val = data.get("default")
+            return default_val
+
+        # Otherwise, return whatever the value is
+        return data
+
 
 class VariableNotFoundException(Exception):
     def __init__(self, variable_name: str, configs: List[ConfigData]):
@@ -43,24 +84,42 @@ class ConfigFile(YamlFile):
         return ConfigData(self.file, self.data)
 
 
-class ConfigSet:
+class ConfigSet(ConfigData):
+
+    VARS_PREFIX = "$vars."
 
     def __init__(self, configs: List[ConfigData]):
         self.configs = configs
-        self.get_variable("asdf")
+        self.var_cache = {}
+        self.url_cache = {}
+        self.steps_cache = {}
 
-    def get_variable(self, var_name: str):
+    def _get_variable_inner(self, var_name: str) -> Optional[Any]:
         for config in reversed(self.configs):
-            if var_name in config.variable_data:
-                var_data = config.variable_data[var_name]
-                if isinstance(var_data, dict):
-                    env_var_name = var_data.get("env")
-                    if env_var_name is not None:
-                        env_var_value = os.getenv(env_var_name)
-                        if env_var_value is not None:
-                            return env_var_value
-                    default = var_data.get("default")
-                    if default is not None:
-                        return default
-
+            config_value = config.get_variable(var_name)
+            if config_value is not None:
+                return config_value
         raise VariableNotFoundException(var_name, self.configs)
+
+    def _get_url_inner(self, url_name: str) -> Optional[str]:
+        for config in reversed(self.configs):
+            url_value = config.get_url(url_name)
+            if url_value is not None:
+                return url_value
+
+        raise VariableNotFoundException("urls." + url_name, self.configs)
+
+    def get_step_set(self, step_set_name: str) -> ReusableStepGroup:
+        if step_set_name not in self.steps_cache:
+            step_set = self._get_step_set_inner(step_set_name)
+            if step_set is not None:
+                self.steps_cache[step_set_name] = step_set
+                return self.steps_cache[step_set_name]
+        raise VariableNotFoundException("step-sets." + step_set_name, self.configs)
+
+    def _get_step_set_inner(self, step_set_name: str) -> Optional[ReusableStepGroup]:
+        for config in reversed(self.configs):
+            step_set_value = config.step_groups.get(step_set_name)
+            if step_set_value is not None:
+                return step_set_value
+        return None

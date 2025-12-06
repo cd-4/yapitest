@@ -34,7 +34,7 @@ variables:
   some-value: another-thing
 
   # Values can also be set from environment variables
-  base_url:
+  default_url:
     env: BASE_URL
     # If environment variable not found, defaults can be set
     # If default value is not set and env var is not found, an error will be thrown
@@ -48,12 +48,12 @@ URLs can also be specified inside of config files.
 
 ```yaml
 urls:
-  base: $vars.base_url
+  default: $vars.default_url.
 ```
 
-In the above example, we are using the variable `base_url` to specify the url with the name `base`.
+In the above example, we are using the variable `default_url` to specify the url with the name `default`.
 
-By default, the url specified with the key `base` will be used as the URL for all API tests unless otherwise specified.
+By default, the url specified with the key `default` will be used as the URL for all API tests unless otherwise specified.
 
 ### Steps
 
@@ -62,7 +62,7 @@ Test steps can also be defined within the configs. These are sets of steps that 
 Below is the config for the steps. The layout is the same as the steps defined within tests, and more details can be found in [./Tests.md](./Tests.md).
 
 ```yaml
-steps:
+step-sets:
   create-user:
     # if `once` is set to true, this step will only be run once per yapitest run. If it is not defined, it will be run each time the step is referenced
     once: false
