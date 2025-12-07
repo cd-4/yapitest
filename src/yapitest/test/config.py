@@ -14,11 +14,11 @@ class ConfigData:
         self.url_data = self.raw_data.get("urls")
         step_groups = {}
 
-        for step_group_key, step_data in self.raw_data.get("steps", {}).items():
+        for step_group_key, step_data in self.raw_data.get("step-sets", {}).items():
             run_once = step_data.get("once", False)
             steps = step_data.get("steps", [])
 
-            step_data = [TestStep(sd) for sd in steps]
+            step_data = [TestStep(-1, sd, None) for sd in steps]
 
             new_group = ReusableStepGroup(steps, once=run_once)
             step_groups[step_group_key] = new_group

@@ -15,7 +15,10 @@ class YapProject:
 
     def run(self):
         for test in self.tests:
+            print("Running Test: " + test.name)
+
             test.run()
+            break
 
     def find_tests(self):
         test_files = []
