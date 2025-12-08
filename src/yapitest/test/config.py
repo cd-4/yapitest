@@ -15,10 +15,10 @@ class ConfigData(DeepDict):
     def set_parent(self, parent: "ConfigData") -> None:
         self.parent = parent
 
-    def _get_keys(self, data: Dict, keys: List[str]) -> Optional[Any]:
-        value = super._get_keys(data, keys)
+    def _get_keys(self, keys: List[str]) -> Optional[Any]:
+        value = super()._get_keys(keys)
         if value is None and self.parent is not None:
-            return self.parent.get(data, keys)
+            return self.parent._get_keys(keys)
 
         if keys[0] in ["urls", "vars"]:
             if not isinstance(value, dict):

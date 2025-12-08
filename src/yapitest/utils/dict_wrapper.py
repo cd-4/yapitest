@@ -19,10 +19,11 @@ class DeepDict(Gettable):
     def get(self, key_s: Any) -> Optional[Any]:
         if isinstance(key_s, str) and key_s.startswith("$"):
             keys = key_s[1:].split(".")
-            return self._get_keys(self.data, key_s)
-        return self._get_keys(self.data, [key_s])
+            return self._get_keys(keys)
+        return self._get_keys([key_s])
 
-    def _get_keys(self, data: Dict, keys: List[str]) -> Optional[Any]:
+    def _get_keys(self, keys: List[str]) -> Optional[Any]:
+        data = self.data
         for key in keys:
             data = data.get(key)
             if data is None:
