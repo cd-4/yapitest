@@ -2,7 +2,7 @@ from pathlib import Path
 from argparse import ArgumentParser
 from find.finder import find_test_files, find_config_files
 from test.config import ConfigFile
-from test.file import TestFile
+from utils.paths import parent_paths
 
 
 class YapProject:
@@ -11,9 +11,10 @@ class YapProject:
         self.args = args
         # self.config = YapConfig.find_config()
         self.configs = self.find_configs()
-        self.tests = self.find_tests()
+        # self.tests = self.find_tests()
 
     def run(self):
+        return
         for test in self.tests:
             print("Running Test: " + test.name)
 
@@ -31,8 +32,6 @@ class YapProject:
                     configs.append(config)
 
             configs.sort(key=lambda x: len(str(x.path)))
-            test_file = TestFile(file, configs)
-            test_files.append(test_file)
 
         # TODO: Filter Test Files
 
@@ -46,8 +45,22 @@ class YapProject:
 
     def find_configs(self):
         all_configs = find_config_files(self.args.test_paths)
-        configs = [ConfigFile(cf).get_data() for cf in all_configs]
-        return configs
+        sorted_configs = sorted(all_configs, key=lambda x: len(str(x)))
+        config_objs = [ConfigFile(cf).get_data() for cf in sorted_configs]
+
+        configs_by_dir = {}
+        for config in config_objs:
+            configs_by_dir[config.file.parent] = config
+
+        for config in config_objs:
+            found = False
+            for ppath in parent_paths(config.file.parent.parent):
+                parent_config = configs_by_dir.get(ppath)
+                if parent_config is not None:
+                    config.set_parent(parent_config)
+                    break
+
+        return config_objs
 
 
 def get_parser():

@@ -1,31 +1,30 @@
-class VariableDictWrapper:
+from typing import Dict, Any, List, Optional
 
-    VAR_PREFIX = "$vars."
 
-    def __init__(self, data, config):
+class Gettable:
+
+    def __init__(self):
+        pass
+
+    def get(self, key_s: Any) -> Optional[Any]:
+        class_name = self.__class__.__name__
+        raise NotImplementedError(f"`{class_name}.get` (Gettable) not defined")
+
+
+class DeepDict(Gettable):
+
+    def __init__(self, data: Dict):
         self.data = data
-        self.config = config
 
-    def get(self, key, default=None):
-        if key in self.data:
-            return self[key]
-        return default
+    def get(self, key_s: Any) -> Optional[Any]:
+        if isinstance(key_s, str) and key_s.startswith("$"):
+            keys = key_s[1:].split(".")
+            return self._get_keys(self.data, key_s)
+        return self._get_keys(self.data, [key_s])
 
-    def __getitem__(self, key):
-        value = self.data.__getitem__(key)
-        if isinstance(value, str):
-            if value.startswith(VariableDictWrapper.VAR_PREFIX):
-                var_name = value[len(VariableDictWrapper.VAR_PREFIX) :]
-                return self.config.get_variable(var_name)
-        return output
-
-
-def flatten_dict(d, parent_key="", sep="."):
-    items = []
-    for k, v in d.items():
-        new_key = parent_key + sep + k if parent_key else k
-        if isinstance(v, dict):
-            items.extend(flatten_dict(v, new_key, sep=sep).items())
-        else:
-            items.append((new_key, v))
-    return dict(items)
+    def _get_keys(self, data: Dict, keys: List[str]) -> Optional[Any]:
+        for key in keys:
+            data = data.get(key)
+            if data is None:
+                return None
+        return data

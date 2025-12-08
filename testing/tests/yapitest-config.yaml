@@ -1,5 +1,5 @@
 # List of default variables that can be used in all tests in this project
-variables:
+vars:
   default_url:
     env: BASE_URL
     default: http://127.0.0.1:8181
@@ -12,21 +12,4 @@ variables:
 
 urls:
   default: $vars.default_url
-
-step-sets:
-  create-user:
-    vars:
-      username: $random.username
-      password: $random.password
-    steps:
-      - id: create-user
-        path: /api/user/create
-        method: POST
-        data:
-          username: $vars.username
-          password: $vars.password
-    output:
-      username: $vars.username
-      password: $vars.password
-      token: $create-user.response.token
 
