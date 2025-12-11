@@ -98,7 +98,7 @@ test-one:
       assert:
         status-code: 200
     # Run the steps in the `create-user` section in the middle of a test
-    - steps: create-user
+    - create-user
     - id: health-check
       path: /api/healthz
       assert:

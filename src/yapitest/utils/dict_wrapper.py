@@ -16,6 +16,9 @@ class DeepDict(Gettable):
     def __init__(self, data: Dict):
         self.data = data
 
+    def set_value(self, key: Any, value: Any):
+        self.data[key] = value
+
     def get(self, key_s: Any) -> Optional[Any]:
         if isinstance(key_s, str) and key_s.startswith("$"):
             keys = key_s[1:].split(".")

@@ -4,10 +4,10 @@ test-get-user:
     - path: /api/user
       method: GET
       headers:
-        API-Token: $setup.create-user.token
+        API-Token: $setup.token
       assert:
         body:
-          name: $setup.create-user.username
+          name: $setup.username
 
 
 

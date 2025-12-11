@@ -12,6 +12,13 @@ class ConfigData(DeepDict):
         self.file = file
         self.parent = parent
 
+    def _make_step_sets(self):
+        if "step-sets" not in self.data:
+            return
+        step_sets_data = self.data["step-sets"]
+        for set_key, set_data in step_sets_data.items():
+            pass
+
     def set_parent(self, parent: "ConfigData") -> None:
         self.parent = parent
 

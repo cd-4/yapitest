@@ -11,10 +11,6 @@ class YapProject:
         self.args = args
         # self.config = YapConfig.find_config()
         self.configs = self.find_configs()
-        for config in self.configs:
-            print("-" * 50)
-            print(config.parent)
-            print(config.get("$vars.default_url"))
         # self.tests = self.find_tests()
 
     def run(self):
