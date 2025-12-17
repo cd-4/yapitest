@@ -53,13 +53,17 @@ class TestStep(DeepDict):
             return value
 
         keys = key.split(".")
-        step_id = keys[0][1:]
-        if step_id in prior_steps:
-            step = prior_steps[step_id]
+        first_key = keys[0][1:]
+        if first_key in prior_steps:
+            step = prior_steps[first_key]
             output = step._get_keys(keys[1:])
             if output is None:
                 raise Exception(f"Parameter `{key}` not defined")
             return output
+
+        # if first_key == "setup":
+        #     raise Exception("SETUP")
+
         raise Exception(f"Parameter `{key}` not defined")
 
     def sanitize(self, data: Any, prior_steps: Dict[str, "TestStep"]) -> Any:
@@ -87,7 +91,7 @@ class TestStep(DeepDict):
         kwargs = {}
 
         if self.header_data is not None:
-            headers = self.sanitize(self.header_data)
+            headers = self.sanitize(self.header_data, prior_steps)
             self.set_value("headers", headers)
             kwargs["headers"] = headers
 
@@ -136,7 +140,8 @@ class StepSet(DeepDict):
     def run(self, prior_steps: Dict[str, "TestStep"]):
         for step in self.steps:
             step.run(prior_steps)
-            prior_steps.append(step)
+            if step.id is not None:
+                prior_steps[step.id] = step
 
         outputs = {}
         for key, value in self.data.get("output", {}).items():
@@ -148,6 +153,7 @@ class StepSet(DeepDict):
 class StepGroupStep(TestStep):
 
     def __init__(self, step_group: StepSet, config: "ConfigData"):
+        self.data = {}
         self.config = config
         self.step_group = step_group
 

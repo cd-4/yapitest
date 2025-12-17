@@ -18,7 +18,7 @@ class YapProject:
         for test in self.tests:
             print(f"Running Test: {test.name}")
             test.run()
-            break
+            # break
 
     def find_tests(self):
         tests = []

@@ -20,10 +20,26 @@ class Test(DeepDict):
 
     def _get_steps(self):
         steps = []
+
+        setup_name = self.data.get("setup")
+        if setup_name is not None:
+            setup = self.config.get_step_set(setup_name)
+            if setup is None:
+                raise Exception(f"Setup {setup_name} not defined")
+            setup.id = "setup"
+            steps.append(setup)
+
         for step_data in self.data.get("steps", []):
             new_step = TestStep(step_data, self.config)
             steps.append(new_step)
         return steps
+
+    def _run_cleanup(self):
+        cleanup_name = self.data.get("cleanup")
+        if cleanup_name is None:
+            return
+        cleanup = self.config.get_step_set(cleanup_name)
+        cleanup.run()
 
     def run(self):
         steps = self._get_steps()
@@ -32,3 +48,5 @@ class Test(DeepDict):
             step.run(prior_steps)
             if step.id is not None:
                 prior_steps[step.id] = step
+
+        self._run_cleanup()

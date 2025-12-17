@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from utils.dict_wrapper import DeepDict
 from utils.yaml import YamlFile
+from test.step import StepSet, StepGroupStep
 
 
 class ConfigData(DeepDict):
@@ -11,13 +12,30 @@ class ConfigData(DeepDict):
         super().__init__(data)
         self.file = file
         self.parent = parent
+        self.step_sets = self._make_step_sets()
+
+    def get_step_set(self, step_set_id: str) -> Optional["TestStep"]:
+        step_set = self.step_sets.get(step_set_id, None)
+        if step_set is not None:
+            return step_set
+
+        if self.parent is not None:
+            return self.parent.get_step_set(step_set_id)
+
+        return None
 
     def _make_step_sets(self):
         if "step-sets" not in self.data:
             return
+
+        step_sets = {}
+
         step_sets_data = self.data["step-sets"]
         for set_key, set_data in step_sets_data.items():
-            pass
+            step_set = StepSet(set_data, self)
+            step_group_step = StepGroupStep(step_set, self)
+            step_sets[set_key] = step_group_step
+        return step_sets
 
     def set_parent(self, parent: "ConfigData") -> None:
         self.parent = parent

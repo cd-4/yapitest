@@ -41,6 +41,7 @@ def check_token() -> None:
     token = request.headers.get("API-Token")
     if token not in USERS_BY_TOKEN:
         abort(403, description="Invalid or unspecified token")
+    return token
 
 
 class SampleUser:
@@ -57,13 +58,14 @@ class SampleUser:
 
     def to_json(self):
         return {
-            "name": self.value1,
+            "name": self.name,
             "id": self.id,
         }
 
     def full_json(self):
         reg_json = self.to_json()
         reg_json["posts"] = [post.to_json() for post in self.posts]
+        return reg_json
 
     @staticmethod
     def random():
