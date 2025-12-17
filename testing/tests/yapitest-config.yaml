@@ -1,6 +1,6 @@
 # List of default variables that can be used in all tests in this project
 vars:
-  default_url:
+  default-url:
     env: BASE_URL
     default: http://127.0.0.1:8181
   sample-user:
@@ -11,5 +11,5 @@ vars:
     default: p4ssw0rd123!
 
 urls:
-  default: $vars.default_url
+  default: $vars.default-url
 

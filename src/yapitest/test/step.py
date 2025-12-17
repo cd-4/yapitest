@@ -1,15 +1,17 @@
 from typing import Dict, Optional, Any
-
-
+import requests
 from utils.dict_wrapper import DeepDict
 from utils.exc import RequiredParameterNotDefined
 
 
 class TestStep(DeepDict):
 
-    def __init__(self, step_data: Dict, config: "ConfigData"):
+    def __init__(self, step_data: Dict, config: Optional["ConfigData"]):
         self.step_data = step_data
-        self.config = config
+        if config is None:
+            self.config = {}
+        else:
+            self.config = config
         super().__init__({})
 
         self.id = self.step_data.get("id")
@@ -19,17 +21,18 @@ class TestStep(DeepDict):
         self.request_data = self.step_data.get("data")
         self.assert_data = self.step_data.get("assert")
 
-    def _get_base_url(self):
+    def _get_base_url(self, prior_steps: Dict[str, "TestStep"]):
         defined_value = self.step_data.get("url")
         if defined_value is None:
-            output = self.config.get("urls.default")
+            output = self.config.get("$urls.default")
             if output is None:
                 raise Exception("Url not defined")
+            return self.sanitize(output, prior_steps)
 
-        return self.sanitize(defined_value)
+        return self.sanitize(defined_value, prior_steps)
 
-    def _get_url(self):
-        base_url = self._get_base_url()
+    def _get_url(self, prior_steps: Dict[str, "TestStep"]):
+        base_url = self._get_base_url(prior_steps)
         path = self.path
         if not path.startswith("/"):
             path = f"/{path}"
@@ -50,7 +53,7 @@ class TestStep(DeepDict):
             return value
 
         keys = key.split(".")
-        step_id = keys[0]
+        step_id = keys[0][1:]
         if step_id in prior_steps:
             step = prior_steps[step_id]
             output = step._get_keys(keys[1:])
@@ -63,7 +66,7 @@ class TestStep(DeepDict):
         # Sanitize Dict
         if isinstance(data, dict):
             output = {}
-            for key, value in data:
+            for key, value in data.items():
                 output[key] = self.sanitize(value, prior_steps)
             return output
 
@@ -72,7 +75,7 @@ class TestStep(DeepDict):
             return [self.sanitize(x, prior_steps) for x in data]
 
         if isinstance(data, str) and data.startswith("$"):
-            return self._get_special_value(data[1:], prior_steps)
+            return self._get_special_value(data, prior_steps)
         return data
 
     def run(self, prior_steps: Optional[Dict[str, "TestStep"]] = None):
@@ -89,12 +92,15 @@ class TestStep(DeepDict):
             kwargs["headers"] = headers
 
         if self.request_data is not None:
-            data = self.sanitize(self.request_data)
+            data = self.sanitize(self.request_data, prior_steps)
             self.set_value("data", data)
             kwargs["json"] = data
 
-        url = self._get_url()
+        url = self._get_url(prior_steps)
         response = method(url, **kwargs)
+
+        response_json = response.json()
+        self.set_value("response", response_json)
 
         self.make_assertions(response)
 
@@ -106,7 +112,7 @@ class StepSet(DeepDict):
 
     def __init__(self, data: Dict, config: "ConfigData"):
         self.config = config
-        inputs = data.get('inputs', {})
+        inputs = data.get("inputs", {})
 
         new_steps = []
         for step in data.get("steps", []):
@@ -127,13 +133,13 @@ class StepSet(DeepDict):
         self.steps = new_steps
         super().__init__(data)
 
-    def run(self, prior_steps: List["TestStep"]):
+    def run(self, prior_steps: Dict[str, "TestStep"]):
         for step in self.steps:
             step.run(prior_steps)
             prior_steps.append(step)
 
         outputs = {}
-        for key, value in self.data.get('output', {}).items():
+        for key, value in self.data.get("output", {}).items():
             outputs[key] = self.get(value)
 
         return outputs, prior_steps
@@ -145,7 +151,7 @@ class StepGroupStep(TestStep):
         self.config = config
         self.step_group = step_group
 
-    def run(self, prior_steps:List["TestStep]):
+    def run(self, prior_steps: Dict[str, "TestStep"]):
         outputs, group_prior_steps = self.step_group.run(prior_steps)
         for key, value in outputs.items():
             self.set_value(key, value)

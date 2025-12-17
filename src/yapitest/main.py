@@ -2,6 +2,7 @@ from pathlib import Path
 from argparse import ArgumentParser
 from find.finder import find_test_files, find_config_files
 from test.config import ConfigFile
+from test.file import TestFile
 from utils.paths import parent_paths
 
 
@@ -11,17 +12,25 @@ class YapProject:
         self.args = args
         # self.config = YapConfig.find_config()
         self.configs = self.find_configs()
-        # self.tests = self.find_tests()
+        self.tests = self.find_tests()
 
     def run(self):
-        return
         for test in self.tests:
-            print("Running Test: " + test.name)
-
+            print(f"Running Test: {test.name}")
             test.run()
             break
 
     def find_tests(self):
+        tests = []
+        # TODO: Filter Test Files
+        # TODO: Filter Tests
+        for file in find_test_files(self.args.test_paths):
+            print(file)
+            test_file = TestFile(file, self.configs)
+            tests.extend(test_file.get_tests())
+        return tests
+
+    def find_tests_OLD(self):
         test_files = []
 
         for file in find_test_files(self.args.test_paths):

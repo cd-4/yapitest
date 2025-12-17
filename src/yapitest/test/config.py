@@ -29,6 +29,8 @@ class ConfigData(DeepDict):
 
         if keys[0] in ["urls", "vars"]:
             if not isinstance(value, dict):
+                if value.startswith("$"):
+                    return self.get(value)
                 return value
             env_var_name = value.get("env")
             if env_var_name is not None:
