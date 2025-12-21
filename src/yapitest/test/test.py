@@ -1,8 +1,8 @@
 from typing import Dict, Optional
 
-from utils.dict_wrapper import DeepDict
-from test.config import ConfigData
-from test.step import TestStep
+from .utils.dict_wrapper import DeepDict
+from .test.config import ConfigData
+from .test.step import TestStep
 
 
 class Test(DeepDict):

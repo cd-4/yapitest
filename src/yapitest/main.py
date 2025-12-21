@@ -1,9 +1,9 @@
 from pathlib import Path
 from argparse import ArgumentParser
-from find.finder import find_test_files, find_config_files
-from test.config import ConfigFile
-from test.file import TestFile
-from utils.paths import parent_paths
+from .find.finder import find_test_files, find_config_files
+from .test.config import ConfigFile
+from .test.file import TestFile
+from .utils.paths import parent_paths
 
 
 class YapProject:
