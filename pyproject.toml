@@ -3,7 +3,7 @@ requires = ["flit_core >=3.2,<4"]
 build-backend = "flit_core.buildapi"
 
 [project]
-name = "yap"
+name = "yapitest"
 authors = [{name = "Charlie Dudzik", email = "dudzikc@outlook.com"}]
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -12,3 +12,8 @@ dynamic = ["version", "description"]
 dependencies = [
     "ruamel.yaml"
 ]
+
+[tool.pytest.ini_options]
+pythonpath = "./src"
+# or relative (works from project root):
+# pythonpath = "src"

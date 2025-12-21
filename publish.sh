@@ -1,0 +1,2 @@
+
+python -m flit publish

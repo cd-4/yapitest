@@ -11,6 +11,7 @@ test-create-user:
         status-code: 200
         body:
           token: +str
+          len(token): '<=20'
 
     - id: check-token
       path: /api/token/check
@@ -30,7 +31,8 @@ test-create-user:
       data:
         token: asdf234
       assert:
-        status-code: 200
+        # status-code: 200
+        status-code: 2xx
         body:
           success: false
 
