@@ -1,7 +1,10 @@
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
 import requests
 from utils.dict_wrapper import DeepDict
 from utils.exc import RequiredParameterNotDefined
+from test.assertions.assertion import Assertion
+from test.assertions.status_code_assertion import StatusCodeAssertion
+from test.assertions.body_assertion import BodyAssertion
 
 
 class TestStep(DeepDict):
@@ -19,7 +22,7 @@ class TestStep(DeepDict):
         self.method = self.step_data.get("method", "GET").lower()
         self.header_data = self.step_data.get("headers")
         self.request_data = self.step_data.get("data")
-        self.assert_data = self.step_data.get("assert")
+        self.assert_data = self.step_data.get("assert", {})
 
     def _get_base_url(self, prior_steps: Dict[str, "TestStep"]):
         defined_value = self.step_data.get("url")
@@ -101,15 +104,41 @@ class TestStep(DeepDict):
             kwargs["json"] = data
 
         url = self._get_url(prior_steps)
-        response = method(url, **kwargs)
+        self.response = method(url, **kwargs)
 
-        response_json = response.json()
+        try:
+            response_json = self.response.json()
+        except:
+            raise Exception("Error decoding JSON")
         self.set_value("response", response_json)
 
-        self.make_assertions(response)
+        self.make_assertions(prior_steps)
 
-    def make_assertions(self, response):
-        pass
+    def _get_assertions(self, prior_steps: Dict[str, "TestStep"]) -> List[Assertion]:
+        assertions = []
+        if "status-code" in self.assert_data:
+            desired_status_code = self.assert_data.get("status-code")
+            assertion = StatusCodeAssertion(self.response, desired_status_code)
+            assertions.append(assertion)
+
+        if "body" in self.assert_data:
+            desired_body_data = self.assert_data.get("body")
+            response_data = self.response.json()
+            assertion = BodyAssertion(
+                response_data,
+                desired_body_data,
+                self,
+                prior_steps,
+            )
+            assertions.append(assertion)
+
+        return assertions
+
+    def make_assertions(self, prior_steps: Dict[str, "TestStep"]):
+        assertions = self._get_assertions(prior_steps)
+        for assertion in assertions:
+            if not assertion.check():
+                raise Exception(assertion.get_message())
 
 
 class StepSet(DeepDict):
@@ -145,7 +174,10 @@ class StepSet(DeepDict):
 
         outputs = {}
         for key, value in self.data.get("output", {}).items():
-            outputs[key] = self.get(value)
+            output_value = self.get(value)
+            if output_value is None:
+                output_value = self.config.get(value)
+            outputs[key] = output_value
 
         return outputs, prior_steps
 

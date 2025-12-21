@@ -47,7 +47,7 @@ class ConfigData(DeepDict):
 
         if keys[0] in ["urls", "vars"]:
             if not isinstance(value, dict):
-                if value.startswith("$"):
+                if isinstance(value, str) and value.startswith("$"):
                     return self.get(value)
                 return value
             env_var_name = value.get("env")

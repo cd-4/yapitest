@@ -32,3 +32,17 @@ class DeepDict(Gettable):
             if data is None:
                 return None
         return data
+
+
+def flatten_dict(dict_data: Dict, parent_keys: Optional[List] = None):
+    if parent_keys is None:
+        parent_keys = []
+    output = []
+    for k, v in dict_data.items():
+        keys = parent_keys + [k]
+        if isinstance(v, dict):
+            output.extend(flatten_dict(v, parent_keys=parent_keys))
+        else:
+            output.append((keys, v))
+
+    return output
