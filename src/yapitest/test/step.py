@@ -1,10 +1,10 @@
 from typing import Dict, Optional, Any, List
 import requests
-from .utils.dict_wrapper import DeepDict
-from .utils.exc import RequiredParameterNotDefined
-from .test.assertions.assertion import Assertion
-from .test.assertions.status_code_assertion import StatusCodeAssertion
-from .test.assertions.body_assertion import BodyAssertion
+from ..utils.dict_wrapper import DeepDict
+from ..utils.exc import RequiredParameterNotDefined
+from ..test.assertions.assertion import Assertion
+from ..test.assertions.status_code_assertion import StatusCodeAssertion
+from ..test.assertions.body_assertion import BodyAssertion
 
 
 class TestStep(DeepDict):

@@ -1,8 +1,8 @@
 from typing import List, Optional
 from pathlib import Path
-from .utils.yaml import YamlFile
-from .test.config import ConfigData
-from .test.test import Test
+from ..utils.yaml import YamlFile
+from ..test.config import ConfigData
+from ..test.test import Test
 
 
 class TestFile(YamlFile):

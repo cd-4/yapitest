@@ -1,9 +1,9 @@
 from typing import Dict, Optional, List, Any
 import os
 from pathlib import Path
-from .utils.dict_wrapper import DeepDict
-from .utils.yaml import YamlFile
-from .test.step import StepSet, StepGroupStep
+from ..utils.dict_wrapper import DeepDict
+from ..utils.yaml import YamlFile
+from ..test.step import StepSet, StepGroupStep
 
 
 class ConfigData(DeepDict):
