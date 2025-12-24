@@ -146,6 +146,8 @@ class StepSet(DeepDict):
     def __init__(self, data: Dict, config: "ConfigData"):
         self.config = config
         inputs = data.get("inputs", {})
+        self.once = data.get("once", False)
+        self.already_run = False
 
         new_steps = []
         for step in data.get("steps", []):
@@ -190,7 +192,13 @@ class StepGroupStep(TestStep):
         self.step_group = step_group
 
     def run(self, prior_steps: Dict[str, "TestStep"]):
+        if self.step_group.once and self.step_group.already_run:
+            return prior_steps
+
         outputs, group_prior_steps = self.step_group.run(prior_steps)
+
         for key, value in outputs.items():
             self.set_value(key, value)
+
+        self.already_run = True
         return prior_steps
