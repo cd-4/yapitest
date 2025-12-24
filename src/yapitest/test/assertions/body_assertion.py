@@ -1,7 +1,7 @@
 from typing import Dict, Any, List, Tuple, Optional, Union
 import re
-from utils.dict_wrapper import DeepDict, flatten_dict
-from test.assertions.assertion import Assertion
+from ...utils.dict_wrapper import DeepDict, flatten_dict
+from ...test.assertions.assertion import Assertion
 
 
 class BodyAssertion(Assertion):

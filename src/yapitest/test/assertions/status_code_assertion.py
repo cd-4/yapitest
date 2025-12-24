@@ -1,6 +1,6 @@
 from typing import Union
 import requests
-from test.assertions.assertion import Assertion
+from ...test.assertions.assertion import Assertion
 
 
 class StatusCodeAssertion(Assertion):
