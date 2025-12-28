@@ -8,14 +8,16 @@ class BodyAssertion(Assertion):
 
     def __init__(
         self,
+        keys: List[Any],
+        desired_value: Any,
         response_data: Dict,
-        desired_data: Dict,
         parent: "TestStep",
         prior_steps: Dict[str, "TestStep"],
     ):
         super().__init__()
-        self.response_data = DeepDict(response_data)
-        self.desired_data = flatten_dict(desired_data)
+        self.keys = keys
+        self.desired_value = desired_value
+        self.response_data = response_data
         self.parent = parent
         self.prior_steps = prior_steps
 
@@ -45,9 +47,9 @@ class BodyAssertion(Assertion):
         else:
             return value == desired_value
 
-    def is_length(self, keys: List) -> Optional[Tuple[bool, str]]:
+    def is_length(self) -> Optional[Tuple[bool, str]]:
         reg = r"len\((.*)\)"
-        match = re.match(reg, keys[-1])
+        match = re.match(reg, self.keys[-1])
         if match is None:
             return False, "NO MATCH"
         return True, match.group(1)
@@ -91,29 +93,46 @@ class BodyAssertion(Assertion):
     def check(self) -> bool:
         self.bad_assertions = []
         fails = False
-        for keys, desired_value in self.desired_data:
 
-            is_length, last_token = self.is_length(keys)
-            if is_length:
-                keys = keys[:-1] + [last_token]
-                value = self.response_data._get_keys(keys)
-                res = self._check_length(value, desired_value)
-                if not res:
-                    self.bad_assertions.append((f"len({keys})", desired_value))
-                    fails = True
-            else:
-                value = self.response_data._get_keys(keys)
-                desired_value = self._sanitize(desired_value)
-                res = self._check_single_value(value, desired_value)
-                if not res:
-                    self.bad_assertions.append((keys, desired_value))
-                    fails = True
+        is_length, last_token = self.is_length()
+        if is_length:
+            keys = self.keys[:-1] + [last_token]
+            value = self.response_data._get_keys(keys)
+            res = self._check_length(value, self.desired_value)
+            if not res:
+                self.bad_assertions.append((f"len({keys})", self.desired_value))
+                fails = True
+        else:
+            value = self.response_data._get_keys(self.keys)
+            desired_value = self._sanitize(self.desired_value)
+            res = self._check_single_value(value, desired_value)
+            if not res:
+                self.bad_assertions.append((self.keys, desired_value))
+                fails = True
 
         return not fails
 
     def get_message(self):
-        lines = []
-        for keys, desired in self.bad_assertions:
-            lines.append(f"{keys} is not {desired}")
+        return f"{self.keys} is not {self.desired_value}"
 
-        return "\n".join(lines)
+
+def get_body_assertions(
+    response_data: Dict,
+    desired_data: Dict,
+    parent: "TestStep",
+    prior_steps: Dict[str, "TestStep"],
+) -> List[BodyAssertion]:
+    response_data = DeepDict(response_data)
+    desired_data = flatten_dict(desired_data)
+
+    assertions = []
+    for desired_keys, desired_value in desired_data:
+        new_assertion = BodyAssertion(
+            desired_keys,
+            desired_value,
+            response_data,
+            parent,
+            prior_steps,
+        )
+        assertions.append(new_assertion)
+    return assertions
