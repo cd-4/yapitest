@@ -108,7 +108,7 @@ class BodyAssertion(Assertion):
         return not fails
 
     def get_message(self):
-        return f"{self.keys} is not {self.desired_value}"
+        return f"{self.keys} is {self.desired_value}"
 
 
 def get_body_assertions(
