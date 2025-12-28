@@ -92,23 +92,18 @@ class BodyAssertion(Assertion):
 
     def check(self) -> bool:
         self.bad_assertions = []
-        fails = False
 
         is_length, last_token = self.is_length()
         if is_length:
             keys = self.keys[:-1] + [last_token]
             value = self.response_data._get_keys(keys)
             res = self._check_length(value, self.desired_value)
-            if not res:
-                self.bad_assertions.append((f"len({keys})", self.desired_value))
-                fails = True
+            return res
         else:
             value = self.response_data._get_keys(self.keys)
             desired_value = self._sanitize(self.desired_value)
             res = self._check_single_value(value, desired_value)
-            if not res:
-                self.bad_assertions.append((self.keys, desired_value))
-                fails = True
+            return res
 
         return not fails
 
