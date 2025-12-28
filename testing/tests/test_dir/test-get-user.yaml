@@ -36,12 +36,57 @@ test-get-users:
           len(users): <=10
 
 
-test-get-user-by-username:
+test-get-by-username:
   setup: create-user
   steps:
     - path: /api/user/$setup.username
       assert:
         body:
-          name: "!str"
-          id: "!int"
+          name: +str
+          id: +int
+
+test-create-post-needs-token:
+  steps:
+    - path: /api/post/create
+      method: POST
+      assert:
+        status-code: 403
+      data:
+        title: Some Title
+        body: Some message
+
+test-create-post:
+  setup: create-user
+  steps:
+    - path: /api/post/create
+      method: POST
+      headers:
+        API-Token: $setup.token
+      data:
+        title: Some Title
+        body: Some message
+      assert:
+        status-code: 200
+
+test-create-and-get-post:
+  setup: create-user
+  steps:
+    - path: /api/post/create
+      id: create-post
+      method: POST
+      headers:
+        API-Token: $setup.token
+      data:
+        title: Some Title
+        body: Some message
+      assert:
+        status-code: 200
+
+    - path: /api/post/$create-post.response.post_id
+      method: GET
+      assert:
+        body:
+          title: "Some Title"
+          body: "Some message"
+
 
