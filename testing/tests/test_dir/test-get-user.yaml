@@ -9,5 +9,24 @@ test-get-user:
         body:
           name: $setup.username
 
+test-update-username:
+  setup: create-user
+  steps:
+    - path: /api/user
+      method: PUT
+      headers:
+        API-Token: $setup.token
+      data:
+        username: "NewUsername"
+      assert:
+        body:
+          body: "Username updated successfully"
+    - path: /api/user
+      headers:
+        API-Token: $setup.token
+      assert:
+        body:
+          name: NewUsername
+
 
 

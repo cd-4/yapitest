@@ -133,7 +133,9 @@ def user():
     if request.method == "GET":
         return user.full_json()
     if request.method == "PUT":
+        print("PUT")
         data = request.get_json()
+        print(data)
         user.name = data["username"]
         return {"body": "Username updated successfully"}
     # This won't be hit
