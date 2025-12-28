@@ -158,9 +158,17 @@ class TestStep(DeepDict):
         path = self.path
         if "url" in self.data:
             path = self.used_url + "/" + self.path
+
+        status = "NA"
+        if not self.has_run:
+            status = "skipped"
+        elif self.passed:
+            status = "passed"
+        else:
+            status = "failed"
         return {
             "step": f"{self.method} {path}",
-            "passed": self.passed,
+            "status": status,
             "assertions": [a.get_json() for a in self.assertions],
         }
 
@@ -215,9 +223,16 @@ class StepSet(DeepDict):
         return outputs, prior_steps
 
     def get_json(self):
+        status = "NA"
+        if not self.has_run:
+            status = "skipped"
+        elif self.passed:
+            status = "passed"
+        else:
+            status = "failed"
         return {
             "step": f"Step Group: {self.name}",
-            "passed": self.passed,
+            "status": status,
         }
 
 
