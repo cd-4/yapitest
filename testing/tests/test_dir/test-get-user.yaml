@@ -89,4 +89,25 @@ test-create-and-get-post:
           title: "Some Title"
           body: "Some message"
 
+test-create-and-get-post-fail:
+  setup: create-user
+  steps:
+    - path: /api/post/create
+      id: create-post
+      method: POST
+      headers:
+        API-Token: $setup.token
+      data:
+        title: Some Other Title
+        body: Some message
+      assert:
+        status-code: 200
+
+    - path: /api/post/$create-post.response.post_id
+      method: GET
+      assert:
+        body:
+          title: +int
+          body: Some bad message
+
 

@@ -1,9 +1,11 @@
 from pathlib import Path
 from argparse import ArgumentParser
+import json
 from .find.finder import find_test_files, find_config_files
 from .test.config import ConfigFile
 from .test.file import TestFile
 from .utils.paths import parent_paths
+from .utils.time import get_time_ms
 
 
 class YapProject:
@@ -15,10 +17,34 @@ class YapProject:
         self.tests = self.find_tests()
 
     def run(self):
+        start_time = get_time_ms()
+
+        test_results = []
         for test in self.tests:
             print(f"Running Test: {test.name}")
-            test.run()
-            # break
+            result = test.run()
+            test_results.append(result)
+
+        end_time = get_time_ms()
+
+        summary = {
+            "start": start_time,
+            "stop": end_time,
+            "tests": len(self.tests),
+            "passed": 0,
+            "failed": 0,
+            "pending": 0,
+            "skipped": 0,
+            "other": 0,
+        }
+        for test in self.tests:
+            summary[test.status] += 1
+
+        return {
+            "tool": "yapitest",
+            "tests": test_results,
+            "summary": summary,
+        }
 
     def find_tests(self):
         tests = []
@@ -108,7 +134,10 @@ def get_parser():
 def main():
     args = get_parser().parse_args()
     project = YapProject(args)
-    project.run()
+    results = project.run()
+
+    with open("yapitest-results.json", "w+") as f:
+        json.dump(results, f)
 
 
 if __name__ == "__main__":

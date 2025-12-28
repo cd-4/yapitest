@@ -32,7 +32,7 @@ class ConfigData(DeepDict):
 
         step_sets_data = self.data["step-sets"]
         for set_key, set_data in step_sets_data.items():
-            step_set = StepSet(set_data, self)
+            step_set = StepSet(set_data, set_key, self)
             step_group_step = StepGroupStep(step_set, self)
             step_sets[set_key] = step_group_step
         return step_sets

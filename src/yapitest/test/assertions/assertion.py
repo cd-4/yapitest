@@ -25,3 +25,9 @@ class Assertion:
         else:
             self._fail()
         return passes
+
+    def get_json(self):
+        return {
+            "passed": self.passed,
+            "message": self.get_message(),
+        }
