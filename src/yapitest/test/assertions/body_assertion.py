@@ -89,6 +89,7 @@ class BodyAssertion(Assertion):
         return self.parent._get_special_value(var, self.prior_steps)
 
     def check(self) -> bool:
+        self.bad_assertions = []
         fails = False
         for keys, desired_value in self.desired_data:
 
@@ -98,12 +99,21 @@ class BodyAssertion(Assertion):
                 value = self.response_data._get_keys(keys)
                 res = self._check_length(value, desired_value)
                 if not res:
+                    self.bad_assertions.append((f"len({keys})", desired_value))
                     fails = True
             else:
                 value = self.response_data._get_keys(keys)
                 desired_value = self._sanitize(desired_value)
                 res = self._check_single_value(value, desired_value)
                 if not res:
+                    self.bad_assertions.append((keys, desired_value))
                     fails = True
 
         return not fails
+
+    def get_message(self):
+        lines = []
+        for keys, desired in self.bad_assertions:
+            lines.append(f"{keys} is not {desired}")
+
+        return "\n".join(lines)

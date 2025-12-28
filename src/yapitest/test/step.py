@@ -43,7 +43,16 @@ class TestStep(DeepDict):
         if base_url.endswith("/"):
             base_url = base_url[:-1]
 
-        return base_url + path
+        real_path = "/"
+        for seg in path.split("/"):
+            if not seg:
+                continue
+            seg = self.sanitize(seg, prior_steps)
+            real_path += str(seg) + "/"
+
+        if real_path.endswith("/"):
+            real_path = real_path[:-1]
+        return base_url + real_path
 
     def _get_required_parameter(self, name: str):
         if name not in self.step_data:
@@ -108,9 +117,9 @@ class TestStep(DeepDict):
 
         try:
             response_json = self.response.json()
+            self.set_value("response", response_json)
         except:
-            raise Exception("Error decoding JSON")
-        self.set_value("response", response_json)
+            pass
 
         self.make_assertions(prior_steps)
 
@@ -146,6 +155,8 @@ class StepSet(DeepDict):
     def __init__(self, data: Dict, config: "ConfigData"):
         self.config = config
         inputs = data.get("inputs", {})
+        self.once = data.get("once", False)
+        self.already_run = False
 
         new_steps = []
         for step in data.get("steps", []):
@@ -190,7 +201,13 @@ class StepGroupStep(TestStep):
         self.step_group = step_group
 
     def run(self, prior_steps: Dict[str, "TestStep"]):
+        if self.step_group.once and self.step_group.already_run:
+            return prior_steps
+
         outputs, group_prior_steps = self.step_group.run(prior_steps)
+
         for key, value in outputs.items():
             self.set_value(key, value)
+
+        self.already_run = True
         return prior_steps

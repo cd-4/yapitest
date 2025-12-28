@@ -25,7 +25,6 @@ class YapProject:
         # TODO: Filter Test Files
         # TODO: Filter Tests
         for file in find_test_files(self.args.test_paths):
-            print(file)
             test_file = TestFile(file, self.configs)
             tests.extend(test_file.get_tests())
         return tests

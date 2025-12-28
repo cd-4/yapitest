@@ -9,7 +9,7 @@ step-sets:
           username: $vars.sample-user
           password: $vars.sample-password
     output:
-      username: $vars.sample-user
-      password: $vars.sample-password
+      username: $create-user.data.username
+      password: $create-user.data.password
       token: $create-user.response.token
 

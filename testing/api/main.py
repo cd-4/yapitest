@@ -100,6 +100,7 @@ def healthcheck():
     return {"healthy": True}
 
 
+# TESTED
 @app.route("/api/user/create", methods=["POST"])
 def create_user():
     if not request.is_json:
@@ -111,6 +112,7 @@ def create_user():
     return {"token": token}
 
 
+# TESTED
 @app.route("/api/token/check", methods=["POST"])
 def check_token_endpoint():
     if not request.is_json:
@@ -121,7 +123,7 @@ def check_token_endpoint():
 
 @app.route("/api/user/list", methods=["GET"])
 def get_users():
-    users = USERS_BY_ID.values()[:10]
+    users = list(USERS_BY_ID.values())[:10]
     users_json = [u.to_json() for u in users]
     return {"users": users_json}
 
@@ -133,7 +135,9 @@ def user():
     if request.method == "GET":
         return user.full_json()
     if request.method == "PUT":
+        print("PUT")
         data = request.get_json()
+        print(data)
         user.name = data["username"]
         return {"body": "Username updated successfully"}
     # This won't be hit
@@ -142,17 +146,22 @@ def user():
 @app.route("/api/user/<username>", methods=["GET"])
 def get_user(username):
     user = USERS_BY_USERNAME[username]
-    return user.full_json()
+    output = user.full_json()
+    print(output)
+    return output
 
 
 @app.route("/api/post/create", methods=["POST"])
 def create_post():
+    print("Create Post!")
     if not request.is_json:
         return jsonify({"error": "Request must be JSON"})
     data = request.get_json()
     title = data["title"]
     body = data["body"]
+    print("Checking Token")
     token = check_token()
+    print("TOKEN", token)
     user = USERS_BY_TOKEN[token]
     user_id = user.id
     new_post = SamplePost(title, body, user_id)
