@@ -4,7 +4,7 @@ from ..utils.dict_wrapper import DeepDict
 from ..utils.exc import RequiredParameterNotDefined
 from ..test.assertions.assertion import Assertion
 from ..test.assertions.status_code_assertion import StatusCodeAssertion
-from ..test.assertions.body_assertion import BodyAssertion
+from ..test.assertions.body_assertion import get_body_assertions
 
 
 class TestStep(DeepDict):
@@ -133,13 +133,14 @@ class TestStep(DeepDict):
         if "body" in self.assert_data:
             desired_body_data = self.assert_data.get("body")
             response_data = self.response.json()
-            assertion = BodyAssertion(
-                response_data,
-                desired_body_data,
-                self,
-                prior_steps,
+            assertions.extend(
+                get_body_assertions(
+                    response_data,
+                    desired_body_data,
+                    self,
+                    prior_steps,
+                )
             )
-            assertions.append(assertion)
 
         return assertions
 
