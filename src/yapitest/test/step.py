@@ -115,6 +115,7 @@ class TestStep(DeepDict):
             kwargs["json"] = data
 
         url = self._get_url(prior_steps)
+        self.used_url = url
         self.response = method(url, **kwargs)
 
         try:
@@ -154,8 +155,11 @@ class TestStep(DeepDict):
                 self.passed = False
 
     def get_json(self):
+        path = self.path
+        if "url" in self.data:
+            path = self.used_url + "/" + self.path
         return {
-            "step": f"{self.method} {self.path}",
+            "step": f"{self.method} {path}",
             "passed": self.passed,
             "assertions": [a.get_json() for a in self.assertions],
         }
