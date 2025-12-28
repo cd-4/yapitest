@@ -100,6 +100,7 @@ def healthcheck():
     return {"healthy": True}
 
 
+# TESTED
 @app.route("/api/user/create", methods=["POST"])
 def create_user():
     if not request.is_json:
@@ -111,6 +112,7 @@ def create_user():
     return {"token": token}
 
 
+# TESTED
 @app.route("/api/token/check", methods=["POST"])
 def check_token_endpoint():
     if not request.is_json:
@@ -121,7 +123,7 @@ def check_token_endpoint():
 
 @app.route("/api/user/list", methods=["GET"])
 def get_users():
-    users = USERS_BY_ID.values()[:10]
+    users = list(USERS_BY_ID.values())[:10]
     users_json = [u.to_json() for u in users]
     return {"users": users_json}
 

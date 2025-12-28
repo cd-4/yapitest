@@ -28,5 +28,20 @@ test-update-username:
         body:
           name: NewUsername
 
+test-get-users:
+  steps:
+    - path: /api/user/list
+      assert:
+        body:
+          len(users): <=10
 
+
+test-get-user-by-username:
+  setup: create-user
+  steps:
+    - path: /api/user/$setup.username
+      assert:
+        body:
+          name: "!str"
+          id: "!int"
 
