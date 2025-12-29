@@ -106,6 +106,7 @@ def create_user():
     if not request.is_json:
         return jsonify({"error": "Request must be JSON"})
     data = request.get_json()
+    # time.sleep(1)
     username = data["username"]
     password = data["password"]
     token = SampleUser(username, password).token
@@ -135,9 +136,7 @@ def user():
     if request.method == "GET":
         return user.full_json()
     if request.method == "PUT":
-        print("PUT")
         data = request.get_json()
-        print(data)
         user.name = data["username"]
         return {"body": "Username updated successfully"}
     # This won't be hit
@@ -147,21 +146,17 @@ def user():
 def get_user(username):
     user = USERS_BY_USERNAME[username]
     output = user.full_json()
-    print(output)
     return output
 
 
 @app.route("/api/post/create", methods=["POST"])
 def create_post():
-    print("Create Post!")
     if not request.is_json:
         return jsonify({"error": "Request must be JSON"})
     data = request.get_json()
     title = data["title"]
     body = data["body"]
-    print("Checking Token")
     token = check_token()
-    print("TOKEN", token)
     user = USERS_BY_TOKEN[token]
     user_id = user.id
     new_post = SamplePost(title, body, user_id)

@@ -1,8 +1,10 @@
 from typing import Dict, Optional
+from ..utils.time import get_time_ms
 
 from ..utils.dict_wrapper import DeepDict
 from ..test.config import ConfigData
 from ..test.step import TestStep
+from ..utils.console import *
 
 
 class Test(DeepDict):
@@ -11,6 +13,8 @@ class Test(DeepDict):
         super().__init__(data)
         self.name = name
         self.config = self._get_config(parent_config)
+        self.steps = self._get_steps()
+        self.status = "pending"
 
     def _get_config(self, parent_config: Optional[ConfigData]) -> Optional[ConfigData]:
         config_data = self.data.get("config", None)
@@ -42,11 +46,61 @@ class Test(DeepDict):
         cleanup.run()
 
     def run(self):
-        steps = self._get_steps()
+        print(
+            f"{YELLOW}[RUNNING]{RESET} {DIM}{self.name}...{RESET}", end="", flush=True
+        )
+        start_time = get_time_ms()
         prior_steps = {}
-        for step in steps:
+        for step in self.steps:
             step.run(prior_steps)
             if step.id is not None:
                 prior_steps[step.id] = step
-
+            if not step.passed:
+                self.status = "failed"
+                break
         self._run_cleanup()
+        end_time = get_time_ms()
+        duration_ms = end_time - start_time
+        if all([s.passed for s in self.steps]):
+            self.status = "passed"
+
+        if self.status == "passed":
+            print(f"\r{BOLD_GREEN}[PASS]{RESET} {self.name}      ", flush=True)
+        else:
+            print(f"\r{BOLD_RED}[FAIL]{RESET} {self.name}      ", flush=True)
+
+        return self.get_results(duration_ms)
+
+    def get_status(self):
+        # Result status: "passed", "failed", "skipped", "pending", or "other".
+        # TODO: Get result status
+        return self.status
+
+    def print_fail_summary(self):
+        print(f"{RED}  {self.name}{RESET}")
+        for step in self.steps:
+            if step.passed or not step.has_run:
+                continue
+            if step.id:
+                print(f"    Step: {step.id}")
+            else:
+                print(f"    Step: {step.path}")
+
+            for assertion in step.assertions:
+                if not assertion.checked:
+                    continue
+                if assertion.passed:
+                    continue
+                print(f"      {RED}FAIL: {RESET} {assertion.get_message()}")
+
+    def get_results(self, duration_ms: int):
+        output = {
+            "name": self.name,
+            "status": self.get_status(),
+            "duration": duration_ms,
+            "type": "API",
+            "extra": [s.get_json() for s in self.steps],
+        }
+        if False:
+            output["message"] = "GET MESSAGE"
+        return output

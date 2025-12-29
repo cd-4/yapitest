@@ -7,21 +7,20 @@ class Assertion:
     def get_message(self, verbose=False) -> str:
         return ""
 
-    def _pass(self) -> None:
-        self.checked = True
-        self.passed = True
-
-    def _fail(self) -> None:
-        self.checked = True
-        self.passed = False
-
     def _perform_check(self) -> bool:
         return False
 
     def check(self) -> bool:
         passes = self._perform_check()
         if passes:
-            self._pass()
+            self.passed = True
         else:
-            self._fail()
+            self.passed = False
+        self.checked = True
         return passes
+
+    def get_json(self):
+        return {
+            "passed": self.passed,
+            "message": self.get_message(),
+        }

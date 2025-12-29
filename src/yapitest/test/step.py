@@ -23,6 +23,8 @@ class TestStep(DeepDict):
         self.header_data = self.step_data.get("headers")
         self.request_data = self.step_data.get("data")
         self.assert_data = self.step_data.get("assert", {})
+        self.has_run = False
+        self.passed = True
 
     def _get_base_url(self, prior_steps: Dict[str, "TestStep"]):
         defined_value = self.step_data.get("url")
@@ -113,6 +115,7 @@ class TestStep(DeepDict):
             kwargs["json"] = data
 
         url = self._get_url(prior_steps)
+        self.used_url = url
         self.response = method(url, **kwargs)
 
         try:
@@ -122,6 +125,7 @@ class TestStep(DeepDict):
             pass
 
         self.make_assertions(prior_steps)
+        self.has_run = True
 
     def _get_assertions(self, prior_steps: Dict[str, "TestStep"]) -> List[Assertion]:
         assertions = []
@@ -145,19 +149,39 @@ class TestStep(DeepDict):
         return assertions
 
     def make_assertions(self, prior_steps: Dict[str, "TestStep"]):
-        assertions = self._get_assertions(prior_steps)
-        for assertion in assertions:
+        self.assertions = self._get_assertions(prior_steps)
+        for assertion in self.assertions:
             if not assertion.check():
-                raise Exception(assertion.get_message())
+                self.passed = False
+
+    def get_json(self):
+        path = self.path
+        if "url" in self.data:
+            path = self.used_url + "/" + self.path
+
+        status = "NA"
+        if not self.has_run:
+            status = "skipped"
+        elif self.passed:
+            status = "passed"
+        else:
+            status = "failed"
+        return {
+            "step": f"{self.method} {path}",
+            "status": status,
+            "assertions": [a.get_json() for a in self.assertions],
+        }
 
 
 class StepSet(DeepDict):
 
-    def __init__(self, data: Dict, config: "ConfigData"):
+    def __init__(self, data: Dict, name: str, config: "ConfigData"):
         self.config = config
         inputs = data.get("inputs", {})
         self.once = data.get("once", False)
-        self.already_run = False
+        self.name = name
+        self.has_run = False
+        self.passed = True
 
         new_steps = []
         for step in data.get("steps", []):
@@ -183,6 +207,9 @@ class StepSet(DeepDict):
             step.run(prior_steps)
             if step.id is not None:
                 prior_steps[step.id] = step
+            if not step.passed:
+                self.passed = False
+                break
 
         outputs = {}
         for key, value in self.data.get("output", {}).items():
@@ -191,7 +218,22 @@ class StepSet(DeepDict):
                 output_value = self.config.get(value)
             outputs[key] = output_value
 
+        self.has_run = True
+
         return outputs, prior_steps
+
+    def get_json(self):
+        status = "NA"
+        if not self.has_run:
+            status = "skipped"
+        elif self.passed:
+            status = "passed"
+        else:
+            status = "failed"
+        return {
+            "step": f"Step Group: {self.name}",
+            "status": status,
+        }
 
 
 class StepGroupStep(TestStep):
@@ -201,8 +243,12 @@ class StepGroupStep(TestStep):
         self.config = config
         self.step_group = step_group
 
+    @property
+    def passed(self):
+        return self.step_group.passed
+
     def run(self, prior_steps: Dict[str, "TestStep"]):
-        if self.step_group.once and self.step_group.already_run:
+        if self.step_group.once and self.step_group.has_run:
             return prior_steps
 
         outputs, group_prior_steps = self.step_group.run(prior_steps)
@@ -210,5 +256,8 @@ class StepGroupStep(TestStep):
         for key, value in outputs.items():
             self.set_value(key, value)
 
-        self.already_run = True
+        self.has_run = True
         return prior_steps
+
+    def get_json(self):
+        return self.step_group.get_json()

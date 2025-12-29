@@ -1,9 +1,13 @@
+import sys
 from pathlib import Path
 from argparse import ArgumentParser
+import json
 from .find.finder import find_test_files, find_config_files
 from .test.config import ConfigFile
 from .test.file import TestFile
 from .utils.paths import parent_paths
+from .utils.time import get_time_ms
+from .utils import console
 
 
 class YapProject:
@@ -14,11 +18,48 @@ class YapProject:
         self.configs = self.find_configs()
         self.tests = self.find_tests()
 
-    def run(self):
+    def print_summary(self, summary):
+        print(f"\n{console.BOLD_MAGENTA}Summary{console.RESET}")
+
+        print(f"  {summary["passed"]} Tests Passed{console.RESET}")
+        print(f"  {summary["failed"]} Tests Failed{console.RESET}")
+
+        print(f"\n{console.BOLD_MAGENTA}Failure Summary:{console.RESET}")
         for test in self.tests:
-            print(f"Running Test: {test.name}")
-            test.run()
-            # break
+            if test.status == "failed":
+                test.print_fail_summary()
+
+    def run(self):
+        print(f"{console.BOLD_MAGENTA}Running Tests{console.RESET}")
+        start_time = get_time_ms()
+
+        test_results = []
+        for test in self.tests:
+            result = test.run()
+            test_results.append(result)
+
+        end_time = get_time_ms()
+
+        summary = {
+            "start": start_time,
+            "stop": end_time,
+            "tests": len(self.tests),
+            "passed": 0,
+            "failed": 0,
+            "pending": 0,
+            "skipped": 0,
+            "other": 0,
+        }
+        for test in self.tests:
+            summary[test.status] += 1
+
+        self.print_summary(summary)
+
+        return {
+            "tool": "yapitest",
+            "tests": test_results,
+            "summary": summary,
+        }
 
     def find_tests(self):
         tests = []
@@ -108,7 +149,17 @@ def get_parser():
 def main():
     args = get_parser().parse_args()
     project = YapProject(args)
-    project.run()
+    results = project.run()
+
+    has_failures = results["summary"]["failed"] > 0
+
+    with open("yapitest-results.json", "w+") as f:
+        json.dump(results, f)
+
+    if has_failures:
+        sys.exit(1)
+    else:
+        sys.exit(0)
 
 
 if __name__ == "__main__":
