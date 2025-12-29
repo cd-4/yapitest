@@ -6,6 +6,7 @@ from .test.config import ConfigFile
 from .test.file import TestFile
 from .utils.paths import parent_paths
 from .utils.time import get_time_ms
+from .utils import console
 
 
 class YapProject:
@@ -16,12 +17,23 @@ class YapProject:
         self.configs = self.find_configs()
         self.tests = self.find_tests()
 
+    def print_summary(self, summary):
+        print(f"\n{console.BOLD_MAGENTA}Summary{console.RESET}")
+
+        print(f"  {summary["passed"]} Tests Passed{console.RESET}")
+        print(f"  {summary["failed"]} Tests Failed{console.RESET}")
+
+        print(f"\n{console.BOLD_MAGENTA}Failure Summary:{console.RESET}")
+        for test in self.tests:
+            if test.status == "failed":
+                test.print_fail_summary()
+
     def run(self):
+        print(f"{console.BOLD_MAGENTA}Running Tests{console.RESET}")
         start_time = get_time_ms()
 
         test_results = []
         for test in self.tests:
-            print(f"Running Test: {test.name}")
             result = test.run()
             test_results.append(result)
 
@@ -39,6 +51,8 @@ class YapProject:
         }
         for test in self.tests:
             summary[test.status] += 1
+
+        self.print_summary(summary)
 
         return {
             "tool": "yapitest",

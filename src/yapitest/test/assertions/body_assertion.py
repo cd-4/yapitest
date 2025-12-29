@@ -90,7 +90,7 @@ class BodyAssertion(Assertion):
 
         return self.parent._get_special_value(var, self.prior_steps)
 
-    def check(self) -> bool:
+    def _perform_check(self) -> bool:
         self.bad_assertions = []
 
         is_length, last_token = self.is_length()
@@ -108,7 +108,7 @@ class BodyAssertion(Assertion):
         return not fails
 
     def get_message(self):
-        return f"{self.keys} is {self.desired_value}"
+        return f"{'.'.join(self.keys)} is {self.desired_value}"
 
 
 def get_body_assertions(
