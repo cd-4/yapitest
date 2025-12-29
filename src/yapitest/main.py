@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 from argparse import ArgumentParser
 import json
@@ -150,8 +151,15 @@ def main():
     project = YapProject(args)
     results = project.run()
 
+    has_failures = results["summary"]["failed"] > 0
+
     with open("yapitest-results.json", "w+") as f:
         json.dump(results, f)
+
+    if has_failures:
+        sys.exit(1)
+    else:
+        sys.exit(0)
 
 
 if __name__ == "__main__":
