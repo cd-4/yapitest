@@ -47,13 +47,15 @@ test-create-and-get-post:
 
 1. Firstly, the name of the test (`test-create-and-get-post`) gives some indication of what the test is doing.
 
-2. There is a `setup` which is something that runs before the test. This one, `create-user` is clearly creating a user. It is defined in a config file elsewhere. This way they can be re-used across many different tests. Similarly, you can optionally specify a `cleanup` which is run after the test completes.
+2. There is a `setup` which is something that runs before the test. This one, `create-user` is reusable step that creates a user. It is defined in a config file. Similarly, you can specify a `cleanup` which is run after the other steps run.
 
 3. Then we have the `steps` section, which includes the actual steps of the tests.
 
-4. The first step has an `id` of `create-post`. It sends a `POST` request to the `/api/post/create` endpoint of the service we are testing. It provides headers defined under the `headers` section. Note how the `API-Token` value is `$setup.token`, this is using the output `token` from the `create-user` setup we defined earlier. Then we provide a JSON payload to the request that lives under the `data` block which includes a `title` and a `body`. Finally, the step has assertions under the `assert` block. Here we aim to ensure that the `status-code` is `201`.
+4. The first step sends a `POST` request to `/api/post/create`, with a `title` and `body` in the payload, utilizing an API Token that the `setup` generated. Then asserts that the status code is `201`.
 
-5. The last step of the test sends a `GET` request to `/api/post/$create-post.response.post_id`. This `$create-post.response.post_id` referse to the json response of the `$create-post` step which has a key `post_id` in it. Then inside of the `assert` block we ensure that the data in the body contains the proper `title` and `body` key/valuesl
+5. The last step of the test sends a `GET` request to `/api/post/$create-post.response.post_id`. This `$create-post.response.post_id` referse to the json response of the `$create-post` step which has a key `post_id` in it. Then inside of the `assert` block we ensure that the data in the body contains the proper `title` and `body` values.
+
+For more information about how to format your tests, please refer to [Tests.md](./Tests.md).
 
 
 ## Installation
