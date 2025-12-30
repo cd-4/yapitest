@@ -4,8 +4,8 @@ Yapitest (Yaml API Testing) is an API testing framework composed entirely of YAM
 
 ### Table of Contents
 
-* [Example](#example)
-* [Installation](#installation)
+- [Example](#example)
+- [Installation](#installation)
 - [Further Documentation](#further-documentation)
   - [Config Files](./Configs.md)
   - [Tests](./Tests.md)
