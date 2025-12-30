@@ -160,7 +160,7 @@ def create_post():
     user = USERS_BY_TOKEN[token]
     user_id = user.id
     new_post = SamplePost(title, body, user_id)
-    return {"post_id": new_post.id}
+    return {"post_id": new_post.id}, 201
 
 
 @app.route("/api/post/<int:post_id>", methods=["GET"])

@@ -166,11 +166,13 @@ class TestStep(DeepDict):
             status = "passed"
         else:
             status = "failed"
-        return {
+
+        json_output = {
             "step": f"{self.method} {path}",
             "status": status,
             "assertions": [a.get_json() for a in self.assertions],
         }
+        return json_output
 
 
 class StepSet(DeepDict):
