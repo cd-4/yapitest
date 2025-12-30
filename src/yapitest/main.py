@@ -107,7 +107,7 @@ class YapProject:
 
 def get_parser():
     parser = ArgumentParser(
-        prog="Yap Test",
+        prog="yapitest",
         description="Yaml-based API testing framework",
         epilog="Text at the bottom of help",
     )
