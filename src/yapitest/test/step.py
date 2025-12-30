@@ -5,6 +5,7 @@ from ..utils.exc import RequiredParameterNotDefined
 from ..test.assertions.assertion import Assertion
 from ..test.assertions.status_code_assertion import StatusCodeAssertion
 from ..test.assertions.body_assertion import get_body_assertions
+from ..test.assertions.full_assertion import FullAssertion
 
 
 class TestStep(DeepDict):
@@ -129,6 +130,13 @@ class TestStep(DeepDict):
 
     def _get_assertions(self, prior_steps: Dict[str, "TestStep"]) -> List[Assertion]:
         assertions = []
+
+        if self.assert_data.get("full", False):
+            assertion = FullAssertion(
+                self.response.json(), self.assert_data.get("body", {})
+            )
+            assertions.append(assertion)
+
         if "status-code" in self.assert_data:
             desired_status_code = self.assert_data.get("status-code")
             assertion = StatusCodeAssertion(self.response, desired_status_code)

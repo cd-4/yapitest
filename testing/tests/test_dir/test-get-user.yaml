@@ -85,6 +85,7 @@ test-create-and-get-post:
     - path: /api/post/$create-post.response.post_id
       method: GET
       assert:
+        full: true
         body:
           title: "Some Title"
           body: "Some message"
