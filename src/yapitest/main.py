@@ -76,6 +76,9 @@ class YapProject:
             test_file = TestFile(file, self.configs)
             tests.extend(test_file.get_tests())
 
+        if self.args.group:
+            tests = [t for t in tests if t.in_groups(self.args.group)]
+
         if self.args.include:
             tests = [t for t in tests if self.contains_texts(t.name, self.args.include)]
         if self.args.exclude:

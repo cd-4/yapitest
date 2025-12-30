@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from ..utils.time import get_time_ms
 
 from ..utils.dict_wrapper import DeepDict
@@ -15,6 +15,13 @@ class Test(DeepDict):
         self.config = self._get_config(parent_config)
         self.steps = self._get_steps()
         self.status = "pending"
+        self.groups = self.data.get("groups", [])
+
+    def in_groups(self, groups: List[str]):
+        for group in groups:
+            if group in self.groups:
+                return True
+        return False
 
     def _get_config(self, parent_config: Optional[ConfigData]) -> Optional[ConfigData]:
         config_data = self.data.get("config", None)
