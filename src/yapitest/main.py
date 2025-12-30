@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 from argparse import ArgumentParser
+from typing import List
 import json
 from .find.finder import find_test_files, find_config_files
 from .test.config import ConfigFile
@@ -61,6 +62,12 @@ class YapProject:
             "summary": summary,
         }
 
+    def contains_texts(self, name: str, texts: List[str]) -> bool:
+        for text in texts:
+            if text in name:
+                return True
+        return False
+
     def find_tests(self):
         tests = []
         # TODO: Filter Test Files
@@ -68,29 +75,15 @@ class YapProject:
         for file in find_test_files(self.args.test_paths):
             test_file = TestFile(file, self.configs)
             tests.extend(test_file.get_tests())
+
+        if self.args.include:
+            tests = [t for t in tests if self.contains_texts(t.name, self.args.include)]
+        if self.args.exclude:
+            tests = [
+                t for t in tests if not self.contains_texts(t.name, self.args.exclude)
+            ]
+
         return tests
-
-    def find_tests_OLD(self):
-        test_files = []
-
-        for file in find_test_files(self.args.test_paths):
-            configs = []
-            for config in self.configs:
-                config_dir = config.path.parent
-                if file.is_relative_to(config_dir):
-                    configs.append(config)
-
-            configs.sort(key=lambda x: len(str(x.path)))
-
-        # TODO: Filter Test Files
-
-        all_tests = []
-        for tf in test_files:
-            all_tests.extend(tf.get_tests())
-
-        # TODO: Filter Tests
-
-        return all_tests
 
     def find_configs(self):
         all_configs = find_config_files(self.args.test_paths)
@@ -114,7 +107,7 @@ class YapProject:
 
 def get_parser():
     parser = ArgumentParser(
-        prog="Yap Test",
+        prog="yapitest",
         description="Yaml-based API testing framework",
         epilog="Text at the bottom of help",
     )
