@@ -10,7 +10,8 @@ license = {file = "LICENSE"}
 classifiers = ["License :: OSI Approved :: MIT License"]
 dynamic = ["version", "description"]
 dependencies = [
-    "ruamel.yaml"
+    "ruamel.yaml",
+    "requests"
 ]
 
 [project.scripts]
