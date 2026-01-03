@@ -1,0 +1,28 @@
+on:
+  workflow_dispatch:
+  push:
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Extract version from commit message (Example logic, adjust as needed)
+        id: extract_version
+        run: echo "VERSION=v$(cat src/yapitest/__init__.py  | grep -o '[0-9]*\.[0-9]*\.[0-9]*')" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        if: steps.extract_version.outputs.VERSION != ''
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.extract_version.outputs.VERSION }}
+          release_name: Release ${{ steps.extract_version.outputs.VERSION }}
+          body: |
+            New Yapitest Release
+
+
