@@ -26,6 +26,20 @@ jobs:
           tag_name: ${{ steps.extract_version.outputs.VERSION }}
           release_name: Release ${{ steps.extract_version.outputs.VERSION }}
           body: |
-            New Yapitest Release
+            New Yapitest Releasej
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          # Optional: Caches dependencies for faster subsequent runs
+          cache: 'pip'
+      - name: Install Flit & Publish
+        env:
+          FLIT_USERNAME: ${{ secrets.FLIT_USERNAME }}
+          FLIT_PASSWORD: ${{ secrets.FLIT_PASSWORD }}
+        run: |
+          python -m pip install flit
+          python -m flit publish
 
 
