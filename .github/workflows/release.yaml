@@ -1,3 +1,4 @@
+run-name: "Deploy Release"
 on:
   workflow_dispatch:
   push:
