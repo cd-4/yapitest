@@ -2,7 +2,6 @@ run-name: "Deploy Release"
 name: "Deploy Release"
 on:
   workflow_dispatch:
-  push:
 
 permissions:
   contents: write
