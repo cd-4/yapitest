@@ -16,8 +16,8 @@ impl ConfigData {
     pub fn get_step_set(&self, key: String) -> Option<&TestStepGroup> {
         let retrieved_value = self.step_sets.get(&key);
         match retrieved_value {
-            Some(value) => {
-                return Some(value);
+            Some(_) => {
+                return retrieved_value;
             }
             None => match &self.parent {
                 Some(parent) => parent.get_step_set(key),
