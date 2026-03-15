@@ -26,6 +26,18 @@ impl ConfigData {
         }
     }
 
-    pub fn get_keys(&self, Vec<String>) Value {
+    pub fn get_keys(&self, keys: Vec<String>) -> Option<&Value> {
+        let mut current_value = &self.data;
+        for key in keys.iter() {
+            let opt_val = current_value.get(key);
+            match opt_val {
+                Some(val) => {
+                    current_value = val;
+                }
+                None => return None,
+            }
+        }
+
+        return Some(current_value);
     }
 }
