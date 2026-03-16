@@ -7,7 +7,9 @@ mod test_step;
 
 use crate::config::ConfigData;
 
-//fn collect_configs(paths: Vec<PathBuf>) -> Vec<ConfigData> {}
+fn collect_configs(paths: Vec<PathBuf>) -> Vec<ConfigData> {
+    vec![]
+}
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Simple example with positional args")]
@@ -48,12 +50,14 @@ fn main() {
         }
     }
 
-    //let configs = collect_configs(test_paths);
+    let configs = collect_configs(test_paths);
 
-    println!("Paths");
-    for path in test_paths.iter() {
-        println!("{}", path.display());
-    }
+    /*
+        println!("Paths");
+        for path in test_paths.iter() {
+            println!("{}", path.display());
+        }
+    */
 
     println!("Groups");
     for path in args.group.iter() {
