@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-struct ConfigData {
+pub struct ConfigData {
     path: PathBuf,
     parent: Option<Rc<ConfigData>>,
     step_sets: HashMap<String, TestStepGroup>,
@@ -13,6 +13,8 @@ struct ConfigData {
 }
 
 impl ConfigData {
+    //pub fn from_file(&self, file: PathBuf) -> ConfigData {}
+
     pub fn get_step_set(&self, key: String) -> Option<&TestStepGroup> {
         let retrieved_value = self.step_sets.get(&key);
         match retrieved_value {
@@ -38,6 +40,6 @@ impl ConfigData {
             }
         }
 
-        return Some(current_value);
+        Some(current_value)
     }
 }

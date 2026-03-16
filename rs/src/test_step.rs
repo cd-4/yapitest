@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fmt::{Display, Error, Formatter};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum TestStepFailureReason {
+pub enum TestStepFailureReason {
     NoFailure,
     NoResponse,
     ResponseError,
@@ -12,7 +12,7 @@ enum TestStepFailureReason {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum TestStepStatus {
+pub enum TestStepStatus {
     NotRun,
     InProgress,
     Pass,
