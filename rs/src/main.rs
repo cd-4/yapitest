@@ -69,6 +69,8 @@ fn load_from_path(path: &PathBuf) -> (Vec<Test>, Vec<ConfigData>) {
                 continue;
             }
 
+            println!("Entry: {}", entry.path().display());
+
             let path_buf = entry.path().to_path_buf();
             let (tests, configs) = load_from_path(&path_buf);
             test_output.extend(tests);
