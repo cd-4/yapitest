@@ -6,12 +6,14 @@ use std::io::BufReader;
 use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct TestStepAssertionSpec {
-    status_code: Option<u32>,
+    status_code: Option<Value>,
     body: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct TestStepSpec {
     id: Option<String>,
     path: String,
@@ -24,6 +26,7 @@ pub struct TestStepSpec {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct ConfigSpec {
     step_sets: Option<Vec<TestStepSpec>>,
     vars: Option<HashMap<String, String>>,
@@ -31,6 +34,7 @@ pub struct ConfigSpec {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct TestSpec {
     setup: Option<String>,
     teardown: Option<String>,
