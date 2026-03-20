@@ -28,6 +28,7 @@ pub enum TestStepStatus {
 pub struct TestStepAssertionSpec {
     status_code: Option<Value>,
     body: Option<Value>,
+    full: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,9 +61,9 @@ struct TestStep {
     method: Method,
     header_data: HashMap<String, String>,
     request_data: Value,
-    expected_response_data: Value,
+    expected_response_data: Option<Value>,
+    expected_status_code: Option<Value>,
     allow_missing_fields: bool,
-    assert_data: Value,
     status: TestStepStatus,
     failure_reason: TestStepFailureReason,
 }
@@ -93,15 +94,27 @@ impl TestStep {
         if let Some(request_data) = spec.data {
             req_data = request_data;
         }
+
+        let mut expected_response_data: Option<Value> = None;
+        let mut expected_status_code: Option<Value> = None;
+        let mut full_data: bool = false;
+        if let Some(assertion_data) = spec.assert {
+            expected_response_data = assertion_data.body;
+            expected_status_code = assertion_data.status_code;
+            if let Some(full) = assertion_data.full {
+                full_data = full;
+            }
+        }
+
         TestStep {
             id: spec.id,
             path: spec.path,
             method: TestStep::get_method(spec.method),
             header_data,
             request_data: req_data,
-            expected_response_data: Value,
-            allow_missing_fields: bool,
-            assert_data: Value,
+            expected_response_data,
+            expected_status_code,
+            allow_missing_fields: !full_data,
             status: TestStepStatus::NotRun,
             failure_reason: TestStepFailureReason::NoFailure,
         }
