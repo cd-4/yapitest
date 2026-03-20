@@ -19,9 +19,7 @@ fn is_test_name(key: String) -> bool {
 impl Test {
     pub fn load_test_file(path: &PathBuf) {
         if let Ok(file) = File::open(path) {
-            // 2. Wrap it in a BufReader for efficiency
             let reader = BufReader::new(file);
-            // 3. Deserialize directly from the reader
             let test_file_result = serde_yaml::from_reader::<_, Value>(reader);
             match test_file_result {
                 Ok(tests_file) => {
@@ -67,7 +65,7 @@ impl Test {
                     }
                 }
                 Err(e) => {
-                    eprintln!("{}", e);
+                    eprintln!("Error Loading Test File: {}\n{}", path.display(), e);
                 }
             }
         }

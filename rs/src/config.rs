@@ -1,8 +1,10 @@
 use crate::test_spec::TestStepSpec;
 use crate::test_step::TestStepGroup;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_yaml::{Value, from_value};
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::BufReader;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -17,13 +19,35 @@ pub struct ConfigSpec {
 pub struct ConfigData {
     path: PathBuf,
     parent: Option<Rc<ConfigData>>,
-    step_sets: HashMap<String, TestStepGroup>,
-    data: Value,
+    step_sets: Option<HashMap<String, TestStepGroup>>,
+    data: Option<Value>,
 }
 
 impl ConfigData {
-    //pub fn from_file(&self, file: PathBuf) -> ConfigData {}
+    pub fn spec_from_value(value: Value) -> Option<ConfigSpec> {
+        match from_value::<ConfigSpec>(value.clone()) {
+            Ok(config_spec) => Some(config_spec),
+            Err(e) => return None,
+        }
+    }
 
+    pub fn spec_from_file(path: &PathBuf) -> Option<ConfigSpec> {
+        if let Ok(file) = File::open(path) {
+            let reader = BufReader::new(file);
+            let config_file_result = serde_yaml::from_reader::<_, Value>(reader);
+            match config_file_result {
+                Ok(config_file) => {
+                    return ConfigData::spec_from_value(config_file);
+                }
+                Err(e) => {
+                    eprintln!("Error Loading Config File: {}\n{}", path.display(), e);
+                }
+            }
+        }
+        return None;
+    }
+
+    /*
     pub fn get_step_set(&self, key: String) -> Option<&TestStepGroup> {
         let retrieved_value = self.step_sets.get(&key);
         match retrieved_value {
@@ -51,4 +75,5 @@ impl ConfigData {
 
         Some(current_value)
     }
+    */
 }
