@@ -1,14 +1,34 @@
 use clap::{ArgAction, Parser};
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 mod config;
+mod test;
+mod test_spec;
 mod test_step;
 
 use crate::config::ConfigData;
+use crate::test::Test;
 
-fn collect_configs(paths: Vec<PathBuf>) -> Vec<ConfigData> {
-    vec![]
+fn load_from_file(path: &PathBuf) -> (Vec<Test>, Vec<ConfigData>) {}
+
+fn load_from_path(path: &PathBuf) -> (Vec<Test>, Vec<ConfigData>) {
+    let mut test_output: Vec<Test> = vec![];
+    let mut config_output: Vec<ConfigData> = vec![];
+
+    if path.is_dir() {
+        let entries = fs::read_dir(path)
+            .map(|entry| entry.path())
+            .collect::<Vec<PathBuf>>();
+    } else {
+        let (tests, configs) = load_from_file(path);
+        test_output.extend(tests);
+        config_output.extend(configs);
+    }
+
+    (test_output, config_output)
+    //(vec![], vec![])
 }
 
 #[derive(Parser, Debug)]
@@ -50,14 +70,14 @@ fn main() {
         }
     }
 
-    let configs = collect_configs(test_paths);
+    //collect_test_files(test_paths);
+    //let configs = collect_configs(test_paths);
 
-    /*
-        println!("Paths");
-        for path in test_paths.iter() {
-            println!("{}", path.display());
-        }
-    */
+    println!("Paths");
+    for path in test_paths.iter() {
+        let (tests, configs) = load_from_path(path);
+        // println!("{}", path.display());
+    }
 
     println!("Groups");
     for path in args.group.iter() {
