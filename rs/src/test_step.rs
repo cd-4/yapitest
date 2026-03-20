@@ -5,8 +5,6 @@ use std::collections::HashMap;
 use std::fmt::{Display, Error, Formatter};
 use std::str::FromStr;
 
-use crate::config::TestStepGroup;
-
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum TestStepFailureReason {
     NoFailure,
@@ -55,7 +53,7 @@ impl Display for TestStepStatus {
     }
 }
 
-struct TestStep {
+pub struct TestStep {
     id: Option<String>,
     path: String,
     method: Method,
@@ -84,7 +82,7 @@ impl TestStep {
         }
     }
 
-    fn from_spec(spec: TestStepSpec) -> TestStep {
+    pub fn from_spec(spec: TestStepSpec) -> TestStep {
         let mut header_data: HashMap<String, String> = HashMap::new();
         if let Some(headers) = spec.headers {
             header_data = headers;

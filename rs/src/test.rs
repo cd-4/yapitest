@@ -38,8 +38,8 @@ impl Test {
                     println!("Loaded Test File");
 
                     let config:Option<ConfigData> =
-                    if let Some(config_value) = tests_file.get("config") {
-                    }
+                    //if let Some(config_value) = tests_file.get("config") {
+                    //}
 
                     if let Some(mapping) = tests_file.as_mapping() {
                         for key in mapping.keys().filter_map(|v| v.as_str()) {

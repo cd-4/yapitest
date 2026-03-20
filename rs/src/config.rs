@@ -1,5 +1,4 @@
-use crate::test_spec::TestStepSpec;
-use crate::test_step::{RunnableTestStep, TestStepStatus};
+use crate::test_step::{RunnableTestStep, TestStepSpec, TestStepStatus};
 use serde::Deserialize;
 use serde_yaml::{Value, from_value};
 use std::collections::HashMap;
@@ -35,7 +34,12 @@ impl TestStepGroup {
 
         TestStepGroup {
             id: Some(id),
-            steps: spec.steps.map(|v| v.to_step()),
+            //steps: spec.steps.map(|v| TestStep::from_spec(v)),
+            steps: spec
+                .steps
+                .into_iter()
+                .map(|(k, v)| (k.clone(), TestStep::from_spec(v)))
+                .collect(),
             status: TestStepStatus::NotRun,
             run_once: once,
             has_run: false,
@@ -53,7 +57,7 @@ pub struct ConfigSpec {
 
 pub struct ConfigData {
     path: PathBuf,
-    parent: Option<&ConfigData>,
+    parent: Option<Rc<ConfigData>>,
     step_sets: Option<HashMap<String, TestStepGroup>>,
     vars: Option<HashMap<String, String>>,
     urls: Option<HashMap<String, String>>,
@@ -62,13 +66,23 @@ pub struct ConfigData {
 impl ConfigData {
     pub fn from_config_spec(
         path: &PathBuf,
-        parent: Option<ConfigData>,
+        parent: Option<Rc<ConfigData>>,
         spec: ConfigSpec,
     ) -> ConfigData {
+        let mut step_sets: Option<HashMap<String, TestStepGroup>> = None;
+        if let Some(step_set_specs) = spec.step_sets {
+            step_sets = Some(
+                step_set_specs
+                    .into_iter()
+                    .map(|(k, v)| (k.clone(), TestStepGroup::from_spec(k.clone(), v)))
+                    .collect(),
+            )
+        }
+
         ConfigData {
             path: path.clone(),
             parent,
-            step_sets: spec.step_sets,
+            step_sets,
             vars: spec.vars,
             urls: spec.urls,
         }
