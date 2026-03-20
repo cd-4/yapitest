@@ -4,7 +4,8 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 
-use crate::test_spec::{ConfigSpec, TestSpec};
+use crate::config::ConfigSpec;
+use crate::test_spec::TestSpec;
 
 pub struct Test {
     name: String,

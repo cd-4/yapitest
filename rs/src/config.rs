@@ -1,9 +1,18 @@
-use serde_json::Value;
-
+use crate::test_spec::TestStepSpec;
 use crate::test_step::TestStepGroup;
+use serde::Deserialize;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct ConfigSpec {
+    step_sets: Option<Vec<TestStepSpec>>,
+    vars: Option<HashMap<String, String>>,
+    urls: Option<HashMap<String, String>>,
+}
 
 pub struct ConfigData {
     path: PathBuf,

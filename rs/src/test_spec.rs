@@ -5,6 +5,8 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 
+use crate::config::ConfigSpec;
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct TestStepAssertionSpec {
@@ -23,14 +25,6 @@ pub struct TestStepSpec {
     assert: Option<TestStepAssertionSpec>,
     output: Option<HashMap<String, String>>,
     once: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct ConfigSpec {
-    step_sets: Option<Vec<TestStepSpec>>,
-    vars: Option<HashMap<String, String>>,
-    urls: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Deserialize)]
