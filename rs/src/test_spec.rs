@@ -8,7 +8,7 @@ use std::path::PathBuf;
 #[derive(Debug, Deserialize)]
 pub struct TestStepAssertionSpec {
     status_code: Option<u32>,
-    body: Value,
+    body: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -16,8 +16,8 @@ pub struct TestStepSpec {
     id: Option<String>,
     path: String,
     method: Option<String>,
-    headers: HashMap<String, String>,
-    data: Value,
+    headers: Option<HashMap<String, String>>,
+    data: Option<Value>,
     assert: Option<TestStepAssertionSpec>,
     output: Option<HashMap<String, String>>,
     once: Option<bool>,

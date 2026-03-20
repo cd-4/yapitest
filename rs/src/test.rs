@@ -10,6 +10,11 @@ pub struct Test {
     name: String,
 }
 
+fn is_test_name(key: String) -> bool {
+    let lower_name = key.to_lowercase();
+    lower_name.starts_with("test") || lower_name.ends_with("test")
+}
+
 impl Test {
     pub fn load_test_file(path: &PathBuf) {
         if let Ok(file) = File::open(path) {
@@ -21,16 +26,42 @@ impl Test {
                 Ok(tests_file) => {
                     println!("Loaded Test File");
 
-                    if let Some(config_data) = tests_file.get("config") {
-                        match from_value::<ConfigSpec>(config_data.clone()) {
-                            Ok(config_spec) => {
-                                println!("Loaded Config Data: {:?}", config_spec);
-                                // use config_spec here
+                    if let Some(mapping) = tests_file.as_mapping() {
+                        for key in mapping.keys().filter_map(|v| v.as_str()) {
+                            if key == "config" {
+                                if let Some(config_value) = mapping.get(key) {
+                                    match from_value::<ConfigSpec>(config_value.clone()) {
+                                        Ok(config_spec) => {
+                                            println!("Loaded Config Data: {:?}", config_spec);
+                                        }
+                                        Err(e) => {
+                                            panic!(
+                                                "Failed to parse test config: {}\n{}",
+                                                path.display(),
+                                                e
+                                            );
+                                        }
+                                    }
+                                }
+                                continue;
+                            } else if is_test_name(key.to_string()) {
+                                if let Some(config_value) = mapping.get(key) {
+                                    match from_value::<TestSpec>(config_value.clone()) {
+                                        Ok(test_spec) => {
+                                            println!("Loaded Test Data: {:?}", test_spec);
+                                        }
+                                        Err(e) => {
+                                            panic!(
+                                                "Failed to parse test: {} at {}\n{}",
+                                                key,
+                                                path.display(),
+                                                e
+                                            );
+                                        }
+                                    }
+                                }
                             }
-                            Err(e) => {
-                                panic!("Failed to parse test config: {}\n{}", path.display(), e);
-                                // eprintln!("Failed to parse test config: {}", e);
-                            }
+                            eprintln!("Key: {}", key);
                         }
                     }
                 }
