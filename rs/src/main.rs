@@ -6,7 +6,6 @@ use walkdir::WalkDir;
 
 mod config;
 mod test;
-mod test_spec;
 mod test_step;
 
 use crate::config::ConfigData;
@@ -42,6 +41,8 @@ fn is_test_file(path: &PathBuf) -> bool {
     }
     false
 }
+
+fn collect_configs(path: &PathBuf) -> Vec<ConfigData> {}
 
 fn try_load_file(path: &PathBuf) -> (Vec<Test>, Vec<ConfigData>) {
     if is_test_file(path) {

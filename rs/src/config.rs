@@ -70,6 +70,8 @@ pub struct ConfigData {
 }
 
 impl ConfigData {
+    pub fn set_parent(&mut self, parent: Rc<ConfigData>) {}
+
     pub fn from_config_spec(
         path: &PathBuf,
         parent: Option<Rc<ConfigData>>,

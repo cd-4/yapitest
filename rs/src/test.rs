@@ -9,6 +9,7 @@ use crate::test_step::TestStepSpec;
 
 pub struct Test {
     name: String,
+    root_config: ConfigData,
 }
 
 #[derive(Debug, Deserialize)]
