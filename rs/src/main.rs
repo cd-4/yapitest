@@ -47,7 +47,8 @@ fn try_load_file(path: &PathBuf) -> (Vec<Test>, Vec<ConfigData>) {
     if is_test_file(path) {
         // Try Load Test
         if let Some(basename) = path.file_name() {
-            println!("Test: {}", basename.display());
+            Test::load_test_file(path);
+            // println!("Test: {}", basename.display());
         }
     } else if is_config_file(path) {
         // Try Load Config File
