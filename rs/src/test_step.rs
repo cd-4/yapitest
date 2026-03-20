@@ -3,6 +3,8 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fmt::{Display, Error, Formatter};
 
+use crate::config::TestStepGroup;
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum TestStepFailureReason {
     NoFailure,
@@ -73,39 +75,6 @@ impl RunnableTestStep for TestStep {
             println!("Got token: {}", token);
         }
         */
-    }
-
-    fn get_status(&self) -> TestStepStatus {
-        self.status
-    }
-}
-
-pub struct TestStepGroup {
-    id: Option<String>,
-    steps: Vec<Box<dyn RunnableTestStep>>,
-    status: TestStepStatus,
-    run_once: bool,
-    has_run: bool,
-}
-
-impl RunnableTestStep for TestStepGroup {
-    fn get_id(&self) -> Option<&String> {
-        self.id.as_ref()
-    }
-
-    fn run(&mut self) {
-        if self.has_run && self.run_once {
-            return;
-        }
-        self.status = TestStepStatus::InProgress;
-        for step in self.steps.iter_mut() {
-            step.run();
-            if step.get_status() == TestStepStatus::Fail {
-                self.status = TestStepStatus::Fail;
-                return;
-            }
-        }
-        self.status = TestStepStatus::Pass;
     }
 
     fn get_status(&self) -> TestStepStatus {

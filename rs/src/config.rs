@@ -1,5 +1,5 @@
 use crate::test_spec::TestStepSpec;
-use crate::test_step::TestStepGroup;
+use crate::test_step::{RunnableTestStep, TestStepStatus};
 use serde::Deserialize;
 use serde_yaml::{Value, from_value};
 use std::collections::HashMap;
@@ -10,20 +10,70 @@ use std::rc::Rc;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+pub struct TestStepGroupSpec {
+    steps: Vec<TestStepSpec>,
+    output: HashMap<String, String>,
+    once: Option<bool>,
+}
+
+pub struct TestStepGroup {
+    id: Option<String>,
+    steps: Vec<Box<dyn RunnableTestStep>>,
+    status: TestStepStatus,
+    run_once: bool,
+    has_run: bool,
+}
+
+impl TestStepGroup {
+    pub fn from_spec(id: String, spec: TestStepGroupSpec) -> TestStepGroup {
+        let mut once = false;
+        if let Some(run_once) = spec.once
+            && run_once
+        {
+            once = true;
+        }
+
+        TestStepGroup {
+            id: Some(id),
+            steps: spec.steps.map(|v| v.to_step()),
+            status: TestStepStatus::NotRun,
+            run_once: once,
+            has_run: false,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct ConfigSpec {
-    step_sets: Option<Vec<TestStepSpec>>,
+    step_sets: Option<HashMap<String, TestStepGroupSpec>>,
     vars: Option<HashMap<String, String>>,
     urls: Option<HashMap<String, String>>,
 }
 
 pub struct ConfigData {
     path: PathBuf,
-    parent: Option<Rc<ConfigData>>,
+    parent: Option<&ConfigData>,
     step_sets: Option<HashMap<String, TestStepGroup>>,
-    data: Option<Value>,
+    vars: Option<HashMap<String, String>>,
+    urls: Option<HashMap<String, String>>,
 }
 
 impl ConfigData {
+    pub fn from_config_spec(
+        path: &PathBuf,
+        parent: Option<ConfigData>,
+        spec: ConfigSpec,
+    ) -> ConfigData {
+        ConfigData {
+            path: path.clone(),
+            parent,
+            step_sets: spec.step_sets,
+            vars: spec.vars,
+            urls: spec.urls,
+        }
+    }
+
     pub fn spec_from_value(value: Value) -> Option<ConfigSpec> {
         match from_value::<ConfigSpec>(value.clone()) {
             Ok(config_spec) => Some(config_spec),
@@ -76,4 +126,29 @@ impl ConfigData {
         Some(current_value)
     }
     */
+}
+
+impl RunnableTestStep for TestStepGroup {
+    fn get_id(&self) -> Option<&String> {
+        self.id.as_ref()
+    }
+
+    fn run(&mut self) {
+        if self.has_run && self.run_once {
+            return;
+        }
+        self.status = TestStepStatus::InProgress;
+        for step in self.steps.iter_mut() {
+            step.run();
+            if step.get_status() == TestStepStatus::Fail {
+                self.status = TestStepStatus::Fail;
+                return;
+            }
+        }
+        self.status = TestStepStatus::Pass;
+    }
+
+    fn get_status(&self) -> TestStepStatus {
+        self.status
+    }
 }
