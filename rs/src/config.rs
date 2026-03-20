@@ -1,4 +1,4 @@
-use crate::test_step::{RunnableTestStep, TestStepSpec, TestStepStatus};
+use crate::test_step::{RunnableTestStep, TestStep, TestStepSpec, TestStepStatus};
 use serde::Deserialize;
 use serde_yaml::{Value, from_value};
 use std::collections::HashMap;
@@ -10,14 +10,14 @@ use std::rc::Rc;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct TestStepGroupSpec {
-    steps: Vec<TestStepSpec>,
+    steps: Vec<Value>,
     output: HashMap<String, String>,
     once: Option<bool>,
 }
 
 pub struct TestStepGroup {
     id: Option<String>,
-    steps: Vec<Box<dyn RunnableTestStep>>,
+    steps: Vec<Rc<dyn RunnableTestStep>>,
     status: TestStepStatus,
     run_once: bool,
     has_run: bool,
@@ -32,14 +32,20 @@ impl TestStepGroup {
             once = true;
         }
 
+        let mut steps: Vec<Rc<dyn RunnableTestStep>> = vec![];
+        for step in spec.steps.iter() {
+            if let Some(step_name) = step.as_str() {
+                panic!("Need to implement step names {}", step_name);
+            } else if let Ok(test_step_spec) = from_value::<TestStepSpec>(step.clone()) {
+                let test_step = TestStep::from_spec(test_step_spec);
+                let test_step_rc: Rc<TestStep> = Rc::new(test_step);
+                steps.push(test_step_rc);
+            }
+        }
+
         TestStepGroup {
             id: Some(id),
-            //steps: spec.steps.map(|v| TestStep::from_spec(v)),
-            steps: spec
-                .steps
-                .into_iter()
-                .map(|(k, v)| (k.clone(), TestStep::from_spec(v)))
-                .collect(),
+            steps,
             status: TestStepStatus::NotRun,
             run_once: once,
             has_run: false,
@@ -109,6 +115,13 @@ impl ConfigData {
             }
         }
         return None;
+    }
+
+    pub fn from_file(parent: Option<Rc<ConfigData>>, path: &PathBuf) -> Option<ConfigData> {
+        if let Some(spec) = ConfigData::spec_from_file(path) {
+            return Some(ConfigData::from_config_spec(path, parent, spec));
+        }
+        None
     }
 
     /*

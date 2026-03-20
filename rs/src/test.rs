@@ -79,7 +79,7 @@ impl Test {
                             eprintln!("Key: {}", key);
                         }
                     }
-                }
+                },
                 Err(e) => {
                     eprintln!("Error Loading Test File: {}\n{}", path.display(), e);
                 }
