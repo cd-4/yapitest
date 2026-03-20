@@ -2,6 +2,7 @@ use clap::{ArgAction, Parser};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use walkdir::WalkDir;
 
 mod config;
 mod test;
@@ -11,16 +12,18 @@ mod test_step;
 use crate::config::ConfigData;
 use crate::test::Test;
 
-fn load_from_file(path: &PathBuf) -> (Vec<Test>, Vec<ConfigData>) {}
+fn load_from_file(path: &PathBuf) -> (Vec<Test>, Vec<ConfigData>) {
+    (vec![], vec![])
+}
 
 fn load_from_path(path: &PathBuf) -> (Vec<Test>, Vec<ConfigData>) {
     let mut test_output: Vec<Test> = vec![];
     let mut config_output: Vec<ConfigData> = vec![];
 
     if path.is_dir() {
-        let entries = fs::read_dir(path)
-            .map(|entry| entry.path())
-            .collect::<Vec<PathBuf>>();
+        for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
+            println!("Entry: {}", entry.path().display());
+        }
     } else {
         let (tests, configs) = load_from_file(path);
         test_output.extend(tests);
