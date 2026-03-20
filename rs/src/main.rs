@@ -12,9 +12,48 @@ mod test_step;
 use crate::config::ConfigData;
 use crate::test::Test;
 
+fn is_yaml(path: &PathBuf) -> bool {
+    if let Some(extension) = path.extension() {
+        return extension == "yaml" || extension == "yml";
+    }
+    false
+}
+
+fn is_config_file(path: &PathBuf) -> bool {
+    if !is_yaml(path) {
+        return false;
+    }
+    if let Some(stem) = path.file_stem() {
+        return stem == "config" || stem == "yapitest-config";
+    }
+    false
+}
+
+fn is_test_file(path: &PathBuf) -> bool {
+    if !is_yaml(path) {
+        return false;
+    }
+    if let Some(stem) = path
+        .file_stem()
+        .and_then(|v| v.to_str())
+        .map(|v| v.to_lowercase())
+    {
+        return stem.starts_with("test") || stem.ends_with("test");
+    }
+    false
+}
+
 fn try_load_file(path: &PathBuf) -> (Vec<Test>, Vec<ConfigData>) {
-    if let Some(basename) = path.file_name() {
-        println!("{}", basename.display());
+    if is_test_file(path) {
+        // Try Load Test
+        if let Some(basename) = path.file_name() {
+            println!("Test: {}", basename.display());
+        }
+    } else if is_config_file(path) {
+        // Try Load Config File
+        if let Some(basename) = path.file_name() {
+            println!("Config: {}", basename.display());
+        }
     }
 
     (vec![], vec![])
@@ -29,8 +68,6 @@ fn load_from_path(path: &PathBuf) -> (Vec<Test>, Vec<ConfigData>) {
             if entry.path() == path {
                 continue;
             }
-
-            println!("Entry: {}", entry.path().display());
 
             let path_buf = entry.path().to_path_buf();
             let (tests, configs) = load_from_path(&path_buf);
