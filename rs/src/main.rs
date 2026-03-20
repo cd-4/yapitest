@@ -12,7 +12,11 @@ mod test_step;
 use crate::config::ConfigData;
 use crate::test::Test;
 
-fn load_from_file(path: &PathBuf) -> (Vec<Test>, Vec<ConfigData>) {
+fn try_load_file(path: &PathBuf) -> (Vec<Test>, Vec<ConfigData>) {
+    if let Some(basename) = path.file_name() {
+        println!("{}", basename.display());
+    }
+
     (vec![], vec![])
 }
 
@@ -22,10 +26,19 @@ fn load_from_path(path: &PathBuf) -> (Vec<Test>, Vec<ConfigData>) {
 
     if path.is_dir() {
         for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
+            if entry.path() == path {
+                continue;
+            }
+
             println!("Entry: {}", entry.path().display());
+
+            let path_buf = entry.path().to_path_buf();
+            let (tests, configs) = load_from_path(&path_buf);
+            test_output.extend(tests);
+            config_output.extend(configs);
         }
     } else {
-        let (tests, configs) = load_from_file(path);
+        let (tests, configs) = try_load_file(path);
         test_output.extend(tests);
         config_output.extend(configs);
     }
