@@ -65,7 +65,7 @@ fn load_from_path(path: &PathBuf) -> (Vec<Test>, Vec<ConfigData>) {
 
     if path.is_dir() {
         for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
-            if entry.path() == path {
+            if entry.path() == path || entry.path().is_dir() {
                 continue;
             }
 
