@@ -5,11 +5,23 @@ use std::io::BufReader;
 use std::path::PathBuf;
 
 use crate::config::ConfigSpec;
-use crate::test_spec::TestSpec;
+use crate::test_step::TestStepSpec;
 
 pub struct Test {
     name: String,
 }
+
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct TestSpec {
+    setup: Option<String>,
+    teardown: Option<String>,
+    steps: Vec<TestStepSpec>,
+    config: Option<ConfigSpec>,
+    groups: Option<Vec<String>>,
+}
+
 
 fn is_test_name(key: String) -> bool {
     let lower_name = key.to_lowercase();

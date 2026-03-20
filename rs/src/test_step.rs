@@ -1,7 +1,9 @@
 use reqwest::{Client, Method};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fmt::{Display, Error, Formatter};
+use std::str::FromStr;
 
 use crate::config::TestStepGroup;
 
@@ -21,6 +23,26 @@ pub enum TestStepStatus {
     Fail,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct TestStepAssertionSpec {
+    status_code: Option<Value>,
+    body: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct TestStepSpec {
+    id: Option<String>,
+    path: String,
+    method: Option<String>,
+    headers: Option<HashMap<String, String>>,
+    data: Option<Value>,
+    assert: Option<TestStepAssertionSpec>,
+    output: Option<HashMap<String, String>>,
+    once: Option<bool>,
+}
+
 impl Display for TestStepStatus {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         match self {
@@ -35,7 +57,7 @@ impl Display for TestStepStatus {
 struct TestStep {
     id: Option<String>,
     path: String,
-    method: Option<Method>,
+    method: Method,
     header_data: HashMap<String, String>,
     request_data: Value,
     expected_response_data: Value,
@@ -43,6 +65,47 @@ struct TestStep {
     assert_data: Value,
     status: TestStepStatus,
     failure_reason: TestStepFailureReason,
+}
+
+impl TestStep {
+    fn get_method(method_str: Option<String>) -> Method {
+        if let Some(method) = method_str {
+            let upper_method = method.to_uppercase();
+
+            match Method::from_str(&upper_method) {
+                Ok(method_enum) => method_enum,
+                Err(e) => {
+                    panic!("Invalid Method {}", e);
+                }
+            }
+        } else {
+            return Method::GET;
+        }
+    }
+
+    fn from_spec(spec: TestStepSpec) -> TestStep {
+        let mut header_data: HashMap<String, String> = HashMap::new();
+        if let Some(headers) = spec.headers {
+            header_data = headers;
+        }
+
+        let mut req_data: Value = Value::Null;
+        if let Some(request_data) = spec.data {
+            req_data = request_data;
+        }
+        TestStep {
+            id: spec.id,
+            path: spec.path,
+            method: TestStep::get_method(spec.method),
+            header_data,
+            request_data: req_data,
+            expected_response_data: Value,
+            allow_missing_fields: bool,
+            assert_data: Value,
+            status: TestStepStatus::NotRun,
+            failure_reason: TestStepFailureReason::NoFailure,
+        }
+    }
 }
 
 pub trait RunnableTestStep {
