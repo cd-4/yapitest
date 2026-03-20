@@ -117,6 +117,13 @@ impl ConfigData {
         return None;
     }
 
+    pub fn from_value(parent: Option<Rc<ConfigData>>, value: Value) -> Option<ConfigData {
+        if let Some(spec) = ConfigData::spec_from_value(value) {
+            return Some(ConfigData::from_config_spec(path, parent, spec));
+        }
+        None
+    }
+
     pub fn from_file(parent: Option<Rc<ConfigData>>, path: &PathBuf) -> Option<ConfigData> {
         if let Some(spec) = ConfigData::spec_from_file(path) {
             return Some(ConfigData::from_config_spec(path, parent, spec));

@@ -11,7 +11,6 @@ pub struct Test {
     name: String,
 }
 
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct TestSpec {
@@ -21,7 +20,6 @@ pub struct TestSpec {
     config: Option<ConfigSpec>,
     groups: Option<Vec<String>>,
 }
-
 
 fn is_test_name(key: String) -> bool {
     let lower_name = key.to_lowercase();
@@ -37,9 +35,10 @@ impl Test {
                 Ok(tests_file) => {
                     println!("Loaded Test File");
 
-                    let config:Option<ConfigData> =
-                    //if let Some(config_value) = tests_file.get("config") {
-                    //}
+                    let mut config: Option<ConfigData> = None;
+                    if let Some(config_value) = tests_file.get("config") {
+                        let config = ConfigData::from_value(config_value);
+                    }
 
                     if let Some(mapping) = tests_file.as_mapping() {
                         for key in mapping.keys().filter_map(|v| v.as_str()) {
@@ -79,7 +78,7 @@ impl Test {
                             eprintln!("Key: {}", key);
                         }
                     }
-                },
+                }
                 Err(e) => {
                     eprintln!("Error Loading Test File: {}\n{}", path.display(), e);
                 }
