@@ -117,7 +117,11 @@ impl ConfigData {
         return None;
     }
 
-    pub fn from_value(parent: Option<Rc<ConfigData>>, value: Value) -> Option<ConfigData {
+    pub fn from_value(
+        parent: Option<Rc<ConfigData>>,
+        value: Value,
+        path: &PathBuf,
+    ) -> Option<ConfigData> {
         if let Some(spec) = ConfigData::spec_from_value(value) {
             return Some(ConfigData::from_config_spec(path, parent, spec));
         }
@@ -168,6 +172,7 @@ impl RunnableTestStep for TestStepGroup {
     }
 
     fn run(&mut self) {
+        /*
         if self.has_run && self.run_once {
             return;
         }
@@ -180,6 +185,7 @@ impl RunnableTestStep for TestStepGroup {
             }
         }
         self.status = TestStepStatus::Pass;
+        */
     }
 
     fn get_status(&self) -> TestStepStatus {

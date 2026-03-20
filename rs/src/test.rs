@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 
-use crate::config::ConfigSpec;
+use crate::config::{ConfigData, ConfigSpec};
 use crate::test_step::TestStepSpec;
 
 pub struct Test {
@@ -37,7 +37,7 @@ impl Test {
 
                     let mut config: Option<ConfigData> = None;
                     if let Some(config_value) = tests_file.get("config") {
-                        let config = ConfigData::from_value(config_value);
+                        let config = ConfigData::from_value(None, config_value.clone(), path);
                     }
 
                     if let Some(mapping) = tests_file.as_mapping() {
