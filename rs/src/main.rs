@@ -43,21 +43,23 @@ fn is_test_file(path: &PathBuf) -> bool {
     false
 }
 
-fn try_load_file(path: &PathBuf) -> (Vec<Test>, Vec<ConfigData>) {
+fn try_load_file(path: &PathBuf) -> (Vec<Test>, Option<ConfigData>) {
     if is_test_file(path) {
         // Try Load Test
         if let Some(basename) = path.file_name() {
-            Test::load_test_file(path);
-            // println!("Test: {}", basename.display());
+            let (config, tests) = Test::load_test_file(path);
+            println!("Test: {}", basename.display());
+            return (tests, config);
         }
     } else if is_config_file(path) {
         // Try Load Config File
         if let Some(basename) = path.file_name() {
             println!("Config: {}", basename.display());
+            return (vec![], ConfigData::from_file(None, path));
         }
     }
 
-    (vec![], vec![])
+    (vec![], None)
 }
 
 fn load_from_path(path: &PathBuf) -> (Vec<Test>, Vec<ConfigData>) {

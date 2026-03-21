@@ -70,7 +70,12 @@ impl Test {
                                 if let Some(config_value) = mapping.get(key) {
                                     match from_value::<TestSpec>(config_value.clone()) {
                                         Ok(test_spec) => {
-                                            println!("Loaded Test Data: {:?}", test_spec);
+                                            tests.push(Test::from_spec(
+                                                path.clone(),
+                                                key.to_string(),
+                                                test_spec,
+                                            ));
+                                            //println!("Loaded Test Data: {:?}", test_spec);
                                         }
                                         Err(e) => {
                                             panic!(
