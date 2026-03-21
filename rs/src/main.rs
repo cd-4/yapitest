@@ -2,6 +2,7 @@ use clap::{ArgAction, Parser};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use walkdir::WalkDir;
 
 mod config;
@@ -41,8 +42,6 @@ fn is_test_file(path: &PathBuf) -> bool {
     }
     false
 }
-
-fn collect_configs(path: &PathBuf) -> Vec<ConfigData> {}
 
 fn try_load_file(path: &PathBuf) -> (Vec<Test>, Vec<ConfigData>) {
     if is_test_file(path) {
@@ -127,14 +126,30 @@ fn main() {
         }
     }
 
-    //collect_test_files(test_paths);
-    //let configs = collect_configs(test_paths);
-
-    println!("Paths");
+    // Gather All Tests & Configs
+    println!("Gathering Tests & Configs");
+    let mut tests: Vec<Test> = vec![];
+    let mut configs: Vec<ConfigData> = vec![];
     for path in test_paths.iter() {
-        let (tests, configs) = load_from_path(path);
-        // println!("{}", path.display());
+        let (path_tests, path_configs) = load_from_path(path);
+        tests.extend(path_tests);
+        configs.extend(path_configs);
     }
+
+    configs.sort_by_key(|item| item.path.display().to_string().len());
+
+    let parent_map: Vec<(u32, u32)> = vec![];
+    println!("CONFIGS");
+    for config_ind in 0..configs.len() {
+        let check_config = &configs[config_ind];
+        println!("{}", check_config.path.display());
+        for parent_ind in 0..config_ind {
+            let parent_config = &configs[parent_ind];
+        }
+    }
+
+    let config_pointers: Vec<Rc<ConfigData>> = configs.into_iter().map(Rc::new).collect();
+    // let config_pointers: Vec<Rc<ConfigData>> = vec![];
 
     println!("Groups");
     for path in args.group.iter() {

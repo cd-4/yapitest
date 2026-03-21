@@ -62,7 +62,7 @@ pub struct ConfigSpec {
 }
 
 pub struct ConfigData {
-    path: PathBuf,
+    pub path: PathBuf,
     parent: Option<Rc<ConfigData>>,
     step_sets: Option<HashMap<String, TestStepGroup>>,
     vars: Option<HashMap<String, String>>,

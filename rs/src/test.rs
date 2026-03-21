@@ -5,11 +5,16 @@ use std::io::BufReader;
 use std::path::PathBuf;
 
 use crate::config::{ConfigData, ConfigSpec};
-use crate::test_step::TestStepSpec;
+use crate::test_step::{TestStep, TestStepSpec};
 
 pub struct Test {
     name: String,
-    root_config: ConfigData,
+    path: PathBuf,
+    config: Option<ConfigData>,
+    groups: Option<Vec<String>>,
+    setup: Option<String>,
+    teardown: Option<String>,
+    steps: Vec<TestStep>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -28,7 +33,26 @@ fn is_test_name(key: String) -> bool {
 }
 
 impl Test {
-    pub fn load_test_file(path: &PathBuf) {
+    pub fn from_spec(path: PathBuf, name: String, spec: TestSpec) -> Test {
+        let mut config: Option<ConfigData> = None;
+        if let Some(config_spec) = spec.config {
+            config = Some(ConfigData::from_config_spec(&path, None, config_spec));
+        }
+        Test {
+            name,
+            path,
+            setup: spec.setup,
+            teardown: spec.teardown,
+            steps: spec.steps.into_iter().map(TestStep::from_spec).collect(),
+            config,
+            groups: spec.groups,
+        }
+    }
+
+    pub fn load_test_file(path: &PathBuf) -> (Option<ConfigData>, Vec<Test>) {
+        let mut config: Option<ConfigData> = None;
+        let mut tests: Vec<Test> = vec![];
+
         if let Ok(file) = File::open(path) {
             let reader = BufReader::new(file);
             let test_file_result = serde_yaml::from_reader::<_, Value>(reader);
@@ -36,30 +60,13 @@ impl Test {
                 Ok(tests_file) => {
                     println!("Loaded Test File");
 
-                    let mut config: Option<ConfigData> = None;
                     if let Some(config_value) = tests_file.get("config") {
-                        let config = ConfigData::from_value(None, config_value.clone(), path);
+                        config = ConfigData::from_value(None, config_value.clone(), path);
                     }
 
                     if let Some(mapping) = tests_file.as_mapping() {
                         for key in mapping.keys().filter_map(|v| v.as_str()) {
-                            if key == "config" {
-                                if let Some(config_value) = mapping.get(key) {
-                                    match from_value::<ConfigSpec>(config_value.clone()) {
-                                        Ok(config_spec) => {
-                                            println!("Loaded Config Data: {:?}", config_spec);
-                                        }
-                                        Err(e) => {
-                                            panic!(
-                                                "Failed to parse test config: {}\n{}",
-                                                path.display(),
-                                                e
-                                            );
-                                        }
-                                    }
-                                }
-                                continue;
-                            } else if is_test_name(key.to_string()) {
+                            if is_test_name(key.to_string()) {
                                 if let Some(config_value) = mapping.get(key) {
                                     match from_value::<TestSpec>(config_value.clone()) {
                                         Ok(test_spec) => {
@@ -85,5 +92,6 @@ impl Test {
                 }
             }
         }
+        (config, tests)
     }
 }
