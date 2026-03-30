@@ -46,6 +46,21 @@ fn is_test_file(path: &PathBuf) -> bool {
     false
 }
 
+fn is_root_dir(path: &PathBuf) -> bool {
+    if !path.is_dir() {
+        return false;
+    }
+
+    let mut path_copy = path.clone();
+    path_copy.push(".git");
+
+    if path_copy.exists() {
+        return true;
+    }
+
+    false
+}
+
 fn try_load_file(path: &PathBuf) -> (Vec<Test>, Option<ConfigData>) {
     if is_test_file(path) {
         // Try Load Test
@@ -233,6 +248,15 @@ fn load_tests_from_file(
     if let Some(config) = cfg_opt {
         configs.insert(config.path.clone(), config);
     }
+
+    for ancestor in path.ancestors() {
+        if is_root_dir(&ancestor.to_path_buf()) {
+            return Ok(tests);
+        }
+    }
+
+    let mut check_config_path = path.clone();
+    while !is_root_dir(check_config_path) && check_config_path.is
 
     Ok(tests)
 }
