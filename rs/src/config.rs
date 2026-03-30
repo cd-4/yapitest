@@ -1,9 +1,10 @@
 use crate::test_step::{RunnableTestStep, TestStep, TestStepSpec, TestStepStatus};
+use anyhow::{Error, Result, anyhow};
 use serde::Deserialize;
 use serde_yaml::{Value, from_value};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, Error};
+use std::io::BufReader;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -111,12 +112,57 @@ impl ConfigData {
                         or a mapping with one or more of 'default' and 'env' values.",
                         key
                     );
-                    return Err(Error::other(error_message));
+                    return Err(anyhow!(error_message));
                 }
             }
         }
 
         Ok(output)
+    }
+
+    pub fn from_spec(path: &PathBuf, spec: ConfigSpec) -> Result<ConfigData> {
+        let mut step_sets: Option<HashMap<String, TestStepGroup>> = None;
+        if let Some(step_set_specs) = spec.step_sets {
+            step_sets = Some(
+                step_set_specs
+                    .into_iter()
+                    .map(|(k, v)| (k.clone(), TestStepGroup::from_spec(k.clone(), v)))
+                    .collect(),
+            )
+        }
+
+        let mut vars: HashMap<String, String> = HashMap::new();
+        let mut urls: HashMap<String, String> = HashMap::new();
+
+        if let Some(spec_vars) = spec.vars {
+            match ConfigData::create_variables(spec_vars) {
+                Ok(vars_result) => {
+                    vars = vars_result;
+                }
+                Err(e) => {
+                    return Err(anyhow!("Error Decoding Config {}:\n{}", path.display(), e));
+                }
+            }
+        }
+
+        if let Some(spec_urls) = spec.urls {
+            match ConfigData::create_variables(spec_urls) {
+                Ok(urls_result) => {
+                    urls = urls_result;
+                }
+                Err(e) => {
+                    return Err(anyhow!("Error Decoding Config {}:\n{}", path.display(), e));
+                }
+            }
+        }
+
+        Ok(ConfigData {
+            path: path.clone(),
+            parent: None,
+            step_sets,
+            vars,
+            urls,
+        })
     }
 
     pub fn from_config_spec(
@@ -168,6 +214,13 @@ impl ConfigData {
         }
     }
 
+    pub fn spec_from_val(value: &Value) -> anyhow::Result<ConfigSpec> {
+        match from_value::<ConfigSpec>(value.clone()) {
+            Ok(config_spec) => Ok(config_spec),
+            Err(e) => Err(anyhow!("{}", e)),
+        }
+    }
+
     pub fn spec_from_value(value: Value) -> Option<ConfigSpec> {
         match from_value::<ConfigSpec>(value.clone()) {
             Ok(config_spec) => Some(config_spec),
@@ -194,6 +247,10 @@ impl ConfigData {
             eprintln!("Error Reading Config File: {}", path.display());
         }
         None
+    }
+
+    pub fn from_val(value: &Value, path: &PathBuf) -> Result<ConfigData> {
+        ConfigData::spec_from_val(value).and_then(|v| ConfigData::from_spec(path, v))
     }
 
     pub fn from_value(

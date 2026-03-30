@@ -1,4 +1,6 @@
+use anyhow::{Error, Result};
 use clap::{ArgAction, Parser};
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -151,7 +153,7 @@ struct Args {
     include: Vec<String>,
 }
 
-fn main() {
+fn main2() {
     let args = Args::parse();
 
     // Validate Paths Exist
@@ -174,6 +176,161 @@ fn main() {
             panic!("Path \"{}\" does not exist. Exiting.", path_arg)
         }
     }
+
+    // Gather All Tests & Configs
+    println!("Gathering Tests & Configs");
+    let mut tests: Vec<Test> = vec![];
+    let mut configs: Vec<ConfigData> = vec![];
+    for path in test_paths.iter() {
+        let (path_tests, path_configs) = load_from_path(path);
+        tests.extend(path_tests);
+        configs.extend(path_configs);
+    }
+
+    let configs = build_config_tree(configs);
+
+    for config in configs.iter() {
+        match config.lock() {
+            Ok(cfg) => {
+                println!("CONFIG: {}", cfg.path.display());
+                if cfg.parent.is_some() {
+                    println!("HAS PARENT: {}", cfg.path.display());
+                } else {
+                    println!("NO PARENT: {}", cfg.path.display());
+                }
+            }
+            Err(_e) => {}
+        }
+    }
+
+    return;
+
+    println!("Groups");
+    for path in args.group.iter() {
+        println!("{}", path);
+    }
+
+    println!("Exclude");
+    for path in args.exclude.iter() {
+        println!("{}", path);
+    }
+
+    println!("Include");
+    for path in args.include.iter() {
+        println!("{}", path);
+    }
+}
+
+fn load_tests_from_file(
+    configs: &mut HashMap<PathBuf, ConfigData>,
+    path: &PathBuf,
+) -> anyhow::Result<Vec<Test>, anyhow::Error> {
+    if !is_test_file(path) {
+        return Ok(vec![]);
+    }
+
+    let (cfg_opt, tests) = Test::load_from_file(path)?;
+    if let Some(config) = cfg_opt {
+        configs.insert(config.path.clone(), config);
+    }
+
+    Ok(tests)
+}
+
+fn load_tests_in_dir(
+    configs: &mut HashMap<PathBuf, ConfigData>,
+    path: &PathBuf,
+) -> anyhow::Result<Vec<Test>, anyhow::Error> {
+    let mut output: Vec<Test> = vec![];
+
+    if let Ok(read_dir) = std::fs::read_dir(path) {
+        for item_res in read_dir {
+            match item_res {
+                Ok(item) => {
+                    if item.path().is_dir() {
+                        match load_tests_in_dir(configs, &item.path()) {
+                            Ok(new_tests) => {
+                                output.extend(new_tests);
+                            }
+                            Err(e) => {
+                                panic!("{}", e);
+                            }
+                        }
+                    } else {
+                        match load_tests_from_file(configs, &item.path()) {
+                            Ok(new_tests) => {
+                                output.extend(new_tests);
+                            }
+                            Err(e) => {
+                                panic!("{}", e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    panic!("{}", e);
+                }
+            }
+        }
+    }
+
+    Ok(output)
+}
+
+fn load_tests(
+    configs: &mut HashMap<PathBuf, ConfigData>,
+    path: &PathBuf,
+) -> anyhow::Result<Vec<Test>, anyhow::Error> {
+    if path.is_dir() {
+        load_tests_in_dir(configs, path)
+    } else {
+        load_tests_from_file(configs, path)
+    }
+}
+
+fn main() {
+    let args = Args::parse();
+
+    // Validate Paths Exist
+
+    let mut test_paths: Vec<PathBuf> = Vec::new();
+    for path_arg in args.paths.iter() {
+        let path = PathBuf::from(path_arg);
+        if path.exists() {
+            let absolute_path = std::fs::canonicalize(&path);
+            match absolute_path {
+                Ok(p) => {
+                    test_paths.push(p);
+                }
+                Err(e) => {
+                    panic!("Error Unwrapping Path {}", path_arg);
+                }
+            }
+        } else {
+            panic!("Path \"{}\" does not exist. Exiting.", path_arg)
+        }
+    }
+
+    let mut configs: HashMap<PathBuf, ConfigData> = HashMap::new();
+    let mut tests: Vec<Test> = vec![];
+    println!("Loading Tests");
+    for path in test_paths.iter() {
+        match load_tests(&mut configs, path) {
+            Ok(found_tests) => {
+                tests.extend(found_tests);
+            }
+            Err(e) => {
+                panic!("{}", e);
+            }
+        }
+    }
+
+    println!("Found Tests");
+    for (k, v) in configs.iter() {
+        println!("{}", k.display());
+    }
+
+    return;
 
     // Gather All Tests & Configs
     println!("Gathering Tests & Configs");

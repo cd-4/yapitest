@@ -1,3 +1,4 @@
+use anyhow::{Error, Result};
 use serde::Deserialize;
 use serde_yaml::{Value, from_value};
 use std::fs::File;
@@ -49,6 +50,54 @@ impl Test {
         }
     }
 
+    pub fn load_from_file(path: &PathBuf) -> Result<(Option<ConfigData>, Vec<Test>), Error> {
+        let mut config: Option<ConfigData> = None;
+        let mut tests: Vec<Test> = vec![];
+
+        if let Ok(file) = File::open(path) {
+            let reader = BufReader::new(file);
+            let test_file_result = serde_yaml::from_reader::<_, Value>(reader);
+            match test_file_result {
+                Ok(test_file) => {
+                    println!("Loaded Raw Test File");
+                    if let Some(config_value) = test_file.get("config") {
+                        config = Some(ConfigData::from_val(&config_value, path)?);
+                    }
+
+                    if let Some(mapping) = test_file.as_mapping() {
+                        for key in mapping.keys().filter_map(|v| v.as_str()) {
+                            if is_test_name(key.to_string()) {
+                                if let Some(test_value) = mapping.get(key) {
+                                    match from_value::<TestSpec>(test_value.clone()) {
+                                        Ok(test_spec) => {
+                                            tests.push(Test::from_spec(
+                                                path.clone(),
+                                                key.to_string(),
+                                                test_spec,
+                                            ));
+                                        }
+                                        Err(e) => {
+                                            panic!(
+                                                "Failed to parse test: {} at {}\n{}",
+                                                key,
+                                                path.display(),
+                                                e
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    return Err(Error::from(e));
+                }
+            }
+        }
+        Ok((config, tests))
+    }
+
     pub fn load_test_file(path: &PathBuf) -> (Option<ConfigData>, Vec<Test>) {
         let mut config: Option<ConfigData> = None;
         let mut tests: Vec<Test> = vec![];
@@ -67,8 +116,8 @@ impl Test {
                     if let Some(mapping) = tests_file.as_mapping() {
                         for key in mapping.keys().filter_map(|v| v.as_str()) {
                             if is_test_name(key.to_string()) {
-                                if let Some(config_value) = mapping.get(key) {
-                                    match from_value::<TestSpec>(config_value.clone()) {
+                                if let Some(test_value) = mapping.get(key) {
+                                    match from_value::<TestSpec>(test_value.clone()) {
                                         Ok(test_spec) => {
                                             tests.push(Test::from_spec(
                                                 path.clone(),
