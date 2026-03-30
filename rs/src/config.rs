@@ -6,6 +6,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -57,24 +58,26 @@ impl TestStepGroup {
 #[serde(rename_all = "kebab-case")]
 pub struct ConfigSpec {
     step_sets: Option<HashMap<String, TestStepGroupSpec>>,
-    vars: Option<HashMap<String, String>>,
-    urls: Option<HashMap<String, String>>,
+    vars: Option<HashMap<String, Value>>,
+    urls: Option<HashMap<String, Value>>,
 }
 
 pub struct ConfigData {
     pub path: PathBuf,
-    parent: Option<Rc<ConfigData>>,
+    pub parent: Option<Arc<Mutex<ConfigData>>>,
     step_sets: Option<HashMap<String, TestStepGroup>>,
-    vars: Option<HashMap<String, String>>,
-    urls: Option<HashMap<String, String>>,
+    vars: Option<HashMap<String, Value>>,
+    urls: Option<HashMap<String, Value>>,
 }
 
 impl ConfigData {
-    pub fn set_parent(&mut self, parent: Rc<ConfigData>) {}
+    pub fn set_parent(&mut self, parent: Option<Arc<Mutex<ConfigData>>>) {
+        self.parent = parent;
+    }
 
     pub fn from_config_spec(
         path: &PathBuf,
-        parent: Option<Rc<ConfigData>>,
+        parent: Option<Arc<Mutex<ConfigData>>>,
         spec: ConfigSpec,
     ) -> ConfigData {
         let mut step_sets: Option<HashMap<String, TestStepGroup>> = None;
@@ -99,7 +102,10 @@ impl ConfigData {
     pub fn spec_from_value(value: Value) -> Option<ConfigSpec> {
         match from_value::<ConfigSpec>(value.clone()) {
             Ok(config_spec) => Some(config_spec),
-            Err(e) => return None,
+            Err(e) => {
+                eprintln!("Error Loading Config: {}", e);
+                None
+            }
         }
     }
 
@@ -115,12 +121,14 @@ impl ConfigData {
                     eprintln!("Error Loading Config File: {}\n{}", path.display(), e);
                 }
             }
+        } else {
+            eprintln!("Error Reading Config File: {}", path.display());
         }
-        return None;
+        None
     }
 
     pub fn from_value(
-        parent: Option<Rc<ConfigData>>,
+        parent: Option<Arc<Mutex<ConfigData>>>,
         value: Value,
         path: &PathBuf,
     ) -> Option<ConfigData> {
@@ -130,7 +138,7 @@ impl ConfigData {
         None
     }
 
-    pub fn from_file(parent: Option<Rc<ConfigData>>, path: &PathBuf) -> Option<ConfigData> {
+    pub fn from_file(parent: Option<Arc<Mutex<ConfigData>>>, path: &PathBuf) -> Option<ConfigData> {
         if let Some(spec) = ConfigData::spec_from_file(path) {
             return Some(ConfigData::from_config_spec(path, parent, spec));
         }

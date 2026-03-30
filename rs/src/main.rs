@@ -3,6 +3,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use walkdir::WalkDir;
 
 mod config;
@@ -48,14 +49,18 @@ fn try_load_file(path: &PathBuf) -> (Vec<Test>, Option<ConfigData>) {
         // Try Load Test
         if let Some(basename) = path.file_name() {
             let (config, tests) = Test::load_test_file(path);
-            println!("Test: {}", basename.display());
+            //println!("Test: {}", path.display());
             return (tests, config);
         }
     } else if is_config_file(path) {
         // Try Load Config File
         if let Some(basename) = path.file_name() {
-            println!("Config: {}", basename.display());
-            return (vec![], ConfigData::from_file(None, path));
+            println!("Config: {}", path.display());
+            let new_config = ConfigData::from_file(None, path);
+            if !new_config.is_some() {
+                println!("CONFIG FAILED TO LOAD");
+            }
+            return (vec![], new_config);
         }
     }
 
@@ -72,7 +77,7 @@ fn load_from_path(path: &PathBuf) -> (Vec<Test>, Vec<ConfigData>) {
                 continue;
             }
 
-            println!("Entry: {}", entry.path().display());
+            // println!("Entry: {}", entry.path().display());
 
             let path_buf = entry.path().to_path_buf();
             let (tests, configs) = load_from_path(&path_buf);
@@ -87,6 +92,48 @@ fn load_from_path(path: &PathBuf) -> (Vec<Test>, Vec<ConfigData>) {
 
     (test_output, config_output)
     //(vec![], vec![])
+}
+
+fn build_config_tree(mut configs: Vec<ConfigData>) -> Vec<Arc<Mutex<ConfigData>>> {
+    // Sort by path depth (shorter paths = higher in the tree = potential parents)
+    configs.sort_by_key(|c| c.path.components().count());
+
+    let mut arc_configs: Vec<Arc<Mutex<ConfigData>>> = Vec::with_capacity(configs.len());
+
+    // First pass: wrap every ConfigData in Arc<Mutex<...>>
+    for config in configs {
+        arc_configs.push(Arc::new(Mutex::new(config)));
+    }
+
+    // Second pass: link parents
+    for i in 0..arc_configs.len() {
+        let child_arc = &arc_configs[i];
+        let child_path = {
+            let guard = child_arc.lock().unwrap();
+            guard.path.clone()
+        };
+
+        // Look for the best (closest) parent
+        for j in 0..i {
+            // Only check previous (shallower) configs
+            let potential_parent_arc = &arc_configs[j];
+            let parent_dir = {
+                let guard = potential_parent_arc.lock().unwrap();
+                guard.path.parent().map(|p| p.to_path_buf())
+            };
+
+            if let Some(parent_dir) = parent_dir {
+                if child_path.starts_with(&parent_dir) {
+                    // Found a parent! Set it on the child
+                    let mut child_guard = child_arc.lock().unwrap();
+                    child_guard.set_parent(Some(Arc::clone(potential_parent_arc)));
+                    break; // Stop at the first (closest) parent
+                }
+            }
+        }
+    }
+
+    arc_configs
 }
 
 #[derive(Parser, Debug)]
@@ -138,20 +185,25 @@ fn main() {
         configs.extend(path_configs);
     }
 
-    configs.sort_by_key(|item| item.path.display().to_string().len());
+    println!("NUM CONFIGS {}", configs.len());
+    let configs = build_config_tree(configs);
+    println!("NUM CONFIGS {}", configs.len());
 
-    let parent_map: Vec<(u32, u32)> = vec![];
-    println!("CONFIGS");
-    for config_ind in 0..configs.len() {
-        let check_config = &configs[config_ind];
-        println!("{}", check_config.path.display());
-        for parent_ind in 0..config_ind {
-            let parent_config = &configs[parent_ind];
+    for config in configs.iter() {
+        match config.lock() {
+            Ok(cfg) => {
+                println!("CONFIG: {}", cfg.path.display());
+                if cfg.parent.is_some() {
+                    println!("HAS PARENT: {}", cfg.path.display());
+                } else {
+                    println!("NO PARENT: {}", cfg.path.display());
+                }
+            }
+            Err(_e) => {}
         }
     }
 
-    let config_pointers: Vec<Rc<ConfigData>> = configs.into_iter().map(Rc::new).collect();
-    // let config_pointers: Vec<Rc<ConfigData>> = vec![];
+    return;
 
     println!("Groups");
     for path in args.group.iter() {
