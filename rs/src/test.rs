@@ -34,6 +34,10 @@ fn is_test_name(key: String) -> bool {
 }
 
 impl Test {
+    pub fn set_config(&mut self, config: ConfigData) {
+        self.config = Some(config);
+    }
+
     pub fn from_spec(path: PathBuf, name: String, spec: TestSpec) -> Test {
         let mut config: Option<ConfigData> = None;
         if let Some(config_spec) = spec.config {
