@@ -281,40 +281,63 @@ fn load_tests_from_file(
         }
     }
 
-    // Iterate through ancestor paths and find configs to set as parents
     for ancestor in path.ancestors() {
-        // If ancestor config already exists, set it as parent of deepest config
-        if let Some(ancestor_config) = configs.get_mut(path) {
-            if let Some(deep_cfg_key) = deepest_config_key.clone() {
-                if let Some(deep_cfg) = configs.get(&deep_cfg_key) {
-                    deep_cfg.set_parent(ancestor_config);
+        let ancestor_pb = ancestor.clone().to_path_buf();
+
+        let mut ancestor_config: Option<ConfigData> = None;
+
+        if let Some(anc_config) = configs.get(ancestor) {
+            ancestor_config = Some(*anc_config);
+        } else {
+            match get_config_in_dir(&ancestor_pb) {
+                Ok(anc_config) => {
+                    ancestor_config = anc_config;
                 }
-            } else {
-                for test in tests.iter_mut() {
-                    if !test.has_config() {
-                        test.set_config(ancestor_config);
-                    }
-                }
-            }
-            deepest_config_key = Some(ancestor_config.path.clone());
-        } else if let Some(ancestor_config) = get_config_in_dir(path)? {
-            configs.insert(ancestor_config.path.clone(), ancestor_config);
-            if let Some(deep_cfg_key) = deepest_config_key {
-                if let Some(deep_cfg) = configs.get(&deep_cfg_key) {
-                    deep_cfg.set_parent(&ancestor_config);
-                }
-            } else {
-                for test in tests.iter() {
-                    if !test.has_config() {
-                        test.set_config(&ancestor_config);
-                    }
+                Err(e) => {
+                    return Err(anyhow!(e));
                 }
             }
-        }
-        if is_root_dir(&ancestor.to_path_buf()) || ancestor.parent().is_none() {
-            return Ok(tests);
         }
     }
+
+    /*
+        // Iterate through ancestor paths and find configs to set as parents
+        for ancestor in path.ancestors() {
+            // If ancestor config already exists, set it as parent of deepest config
+
+            let ancestor_pb = ancestor.to_path_buf();
+            if let Some(ancestor_config) = configs.get_mut(ancestor_pb) {
+                if let Some(deep_cfg_key) = deepest_config_key.clone() {
+                    if let Some(deep_cfg) = configs.get_mut(&deep_cfg_key) {
+                        deep_cfg.set_parent(ancestor_config);
+                    }
+                } else {
+                    for test in tests.iter_mut() {
+                        if !test.has_config() {
+                            test.set_config(ancestor_config);
+                        }
+                    }
+                }
+                deepest_config_key = Some(ancestor_config.path.clone());
+            } else if let Some(ancestor_config) = get_config_in_dir(path)? {
+                configs.insert(ancestor_config.path.clone(), ancestor_config);
+                if let Some(deep_cfg_key) = deepest_config_key {
+                    if let Some(deep_cfg) = configs.get(&deep_cfg_key) {
+                        deep_cfg.set_parent(&ancestor_config);
+                    }
+                } else {
+                    for test in tests.iter() {
+                        if !test.has_config() {
+                            test.set_config(&ancestor_config);
+                        }
+                    }
+                }
+            }
+            if is_root_dir(&ancestor.to_path_buf()) || ancestor.parent().is_none() {
+                return Ok(tests);
+            }
+        }
+    */
 
     Ok(tests)
 }
