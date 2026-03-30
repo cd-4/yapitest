@@ -54,6 +54,11 @@ impl TestStepGroup {
     }
 }
 
+pub struct ConfigVariable {
+    value: Option<String>,
+    env_var_name: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct ConfigSpec {
@@ -66,13 +71,36 @@ pub struct ConfigData {
     pub path: PathBuf,
     pub parent: Option<Arc<Mutex<ConfigData>>>,
     step_sets: Option<HashMap<String, TestStepGroup>>,
-    vars: Option<HashMap<String, Value>>,
-    urls: Option<HashMap<String, Value>>,
+    vars: Option<HashMap<String, ConfigVariable>>,
+    urls: Option<HashMap<String, ConfigVariable>>,
 }
 
 impl ConfigData {
     pub fn set_parent(&mut self, parent: Option<Arc<Mutex<ConfigData>>>) {
         self.parent = parent;
+    }
+
+    fn create_variables(
+        spec_vars: Option<HashMap<String, Value>>,
+    ) -> Option<HashMap<String, ConfigVariable>> {
+        if let Some(var_map) = spec_vars {
+            let mut output = HashMap<String, ConfigVariable>;
+            for (key, value) in var_map.iter() {
+                println!("Key: {}, Value: {}", key, value);
+                if let Ok(string_val) = value.as_str() {
+                    output[key] = ConfigVariable {
+                        value : Some(string_val),
+                        env_var_name : None,
+                    }
+                }
+                if let Ok(map_val) = value.as_mapping() {
+                    let mut env_var_value:Option<String> = None;
+                    let mut value:Option<String> = None;
+                }
+            }
+            return output;
+        }
+        None
     }
 
     pub fn from_config_spec(
