@@ -39,7 +39,6 @@ pub struct TestStepSpec {
     data: Option<Value>,
     assert: Option<TestStepAssertionSpec>,
     output: Option<HashMap<String, String>>,
-    once: Option<bool>,
 }
 
 impl Display for TestStepStatus {
