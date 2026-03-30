@@ -1,4 +1,4 @@
-use anyhow::{Error, Result};
+use anyhow::{Error, Result, anyhow};
 use clap::{ArgAction, Parser};
 use std::collections::HashMap;
 use std::env;
@@ -236,6 +236,30 @@ fn main2() {
     }
 }
 
+fn get_config_in_dir(path: &PathBuf) -> Result<Option<ConfigData>> {
+    let yapitest_config_names = [
+        "yapitest-config.yaml",
+        "yapitest-config.yml",
+        "config.yaml",
+        "config.yml",
+    ];
+    for config_name in yapitest_config_names.iter() {
+        let mut config_path = path.clone();
+        config_path.push(config_name);
+        if config_path.exists() {
+            match ConfigData::from_file_new(&config_path) {
+                Ok(config) => {
+                    return Ok(Some(config));
+                }
+                Err(e) => {
+                    return Err(anyhow!(e));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
 fn load_tests_from_file(
     configs: &mut HashMap<PathBuf, ConfigData>,
     path: &PathBuf,
@@ -244,19 +268,53 @@ fn load_tests_from_file(
         return Ok(vec![]);
     }
 
-    let (cfg_opt, tests) = Test::load_from_file(path)?;
+    let mut deepest_config_key: Option<PathBuf> = None;
+
+    let (cfg_opt, mut tests) = Test::load_from_file(path)?;
+
+    // If a config exists, set the test's config to it, and declare it as deepest config
     if let Some(config) = cfg_opt {
         configs.insert(config.path.clone(), config);
-    }
-
-    for ancestor in path.ancestors() {
-        if is_root_dir(&ancestor.to_path_buf()) {
-            return Ok(tests);
+        deepest_config_key = Some(config.path.clone());
+        for test in tests.iter_mut() {
+            test.set_config(&config);
         }
     }
 
-    let mut check_config_path = path.clone();
-    while !is_root_dir(check_config_path) && check_config_path.is
+    // Iterate through ancestor paths and find configs to set as parents
+    for ancestor in path.ancestors() {
+        // If ancestor config already exists, set it as parent of deepest config
+        if let Some(ancestor_config) = configs.get_mut(path) {
+            if let Some(deep_cfg_key) = deepest_config_key.clone() {
+                if let Some(deep_cfg) = configs.get(&deep_cfg_key) {
+                    deep_cfg.set_parent(ancestor_config);
+                }
+            } else {
+                for test in tests.iter_mut() {
+                    if !test.has_config() {
+                        test.set_config(ancestor_config);
+                    }
+                }
+            }
+            deepest_config_key = Some(ancestor_config.path.clone());
+        } else if let Some(ancestor_config) = get_config_in_dir(path)? {
+            configs.insert(ancestor_config.path.clone(), ancestor_config);
+            if let Some(deep_cfg_key) = deepest_config_key {
+                if let Some(deep_cfg) = configs.get(&deep_cfg_key) {
+                    deep_cfg.set_parent(&ancestor_config);
+                }
+            } else {
+                for test in tests.iter() {
+                    if !test.has_config() {
+                        test.set_config(&ancestor_config);
+                    }
+                }
+            }
+        }
+        if is_root_dir(&ancestor.to_path_buf()) || ancestor.parent().is_none() {
+            return Ok(tests);
+        }
+    }
 
     Ok(tests)
 }

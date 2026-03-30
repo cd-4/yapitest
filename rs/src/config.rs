@@ -68,17 +68,18 @@ pub struct ConfigSpec {
     urls: Option<HashMap<String, Value>>,
 }
 
+#[derive(Copy)]
 pub struct ConfigData {
     pub path: PathBuf,
-    pub parent: Option<Arc<Mutex<ConfigData>>>,
+    pub parent: Option<&ConfigData>,
     step_sets: Option<HashMap<String, TestStepGroup>>,
     vars: HashMap<String, String>,
     urls: HashMap<String, String>,
 }
 
 impl ConfigData {
-    pub fn set_parent(&mut self, parent: Option<Arc<Mutex<ConfigData>>>) {
-        self.parent = parent;
+    pub fn set_parent(&mut self, parent: &ConfigData) {
+        self.parent = Some(parent);
     }
 
     fn create_variables(
@@ -263,6 +264,8 @@ impl ConfigData {
         }
         None
     }
+
+    pub fn from_file_new(path: &PathBuf) -> Result<ConfigData> {}
 
     pub fn from_file(parent: Option<Arc<Mutex<ConfigData>>>, path: &PathBuf) -> Option<ConfigData> {
         if let Some(spec) = ConfigData::spec_from_file(path) {

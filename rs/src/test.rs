@@ -34,7 +34,11 @@ fn is_test_name(key: String) -> bool {
 }
 
 impl Test {
-    pub fn set_config(&mut self, config: ConfigData) {
+    pub fn has_config(&self) -> bool {
+        self.config.is_some()
+    }
+
+    pub fn set_config(&mut self, config: &ConfigData) {
         self.config = Some(config);
     }
 
