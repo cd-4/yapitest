@@ -185,9 +185,7 @@ fn main() {
         configs.extend(path_configs);
     }
 
-    println!("NUM CONFIGS {}", configs.len());
     let configs = build_config_tree(configs);
-    println!("NUM CONFIGS {}", configs.len());
 
     for config in configs.iter() {
         match config.lock() {
