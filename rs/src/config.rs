@@ -90,20 +90,18 @@ impl ConfigData {
                 output.insert(String::from(key), String::from(string_val));
             } else if let Some(mapping_val) = value.as_mapping() {
                 let mut has_value = false;
-                if let Some(env_var_name_val) = mapping_val.get("env") {
-                    if let Some(env_var_name_str) = env_var_name_val.as_str() {
-                        if let Ok(env_var_str) = std::env::var(env_var_name_str) {
-                            output.insert(String::from(key), env_var_str);
-                            has_value = true;
-                        }
+                if let Some(env_var_name_str) = mapping_val.get("env").and_then(|v| v.as_str()) {
+                    if let Ok(env_var_str) = std::env::var(env_var_name_str) {
+                        output.insert(String::from(key), env_var_str);
+                        has_value = true;
                     }
                 }
 
-                if !has_value && let Some(default_val) = mapping_val.get("default") {
-                    if let Some(default_str) = default_val.as_str() {
-                        output.insert(String::from(key), String::from(default_str));
-                        has_value = true;
-                    }
+                if !has_value
+                    && let Some(default_str) = mapping_val.get("default").and_then(|v| v.as_str())
+                {
+                    output.insert(String::from(key), String::from(default_str));
+                    has_value = true;
                 }
 
                 if !has_value {
