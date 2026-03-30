@@ -3,7 +3,7 @@ use serde::Deserialize;
 use serde_yaml::{Value, from_value};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Error};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -71,8 +71,8 @@ pub struct ConfigData {
     pub path: PathBuf,
     pub parent: Option<Arc<Mutex<ConfigData>>>,
     step_sets: Option<HashMap<String, TestStepGroup>>,
-    vars: Option<HashMap<String, ConfigVariable>>,
-    urls: Option<HashMap<String, ConfigVariable>>,
+    vars: HashMap<String, String>,
+    urls: HashMap<String, String>,
 }
 
 impl ConfigData {
@@ -81,26 +81,44 @@ impl ConfigData {
     }
 
     fn create_variables(
-        spec_vars: Option<HashMap<String, Value>>,
-    ) -> Option<HashMap<String, ConfigVariable>> {
-        if let Some(var_map) = spec_vars {
-            let mut output = HashMap<String, ConfigVariable>;
-            for (key, value) in var_map.iter() {
-                println!("Key: {}, Value: {}", key, value);
-                if let Ok(string_val) = value.as_str() {
-                    output[key] = ConfigVariable {
-                        value : Some(string_val),
-                        env_var_name : None,
+        spec_vars: HashMap<String, Value>,
+    ) -> Result<HashMap<String, String>, Error> {
+        let mut output: HashMap<String, String> = HashMap::new();
+
+        for (key, value) in spec_vars.iter() {
+            if let Some(string_val) = value.as_str() {
+                output.insert(String::from(key), String::from(string_val));
+            } else if let Some(mapping_val) = value.as_mapping() {
+                let mut has_value = false;
+                if let Some(env_var_name_val) = mapping_val.get("env") {
+                    if let Some(env_var_name_str) = env_var_name_val.as_str() {
+                        if let Ok(env_var_str) = std::env::var(env_var_name_str) {
+                            output.insert(String::from(key), env_var_str);
+                            has_value = true;
+                        }
                     }
                 }
-                if let Ok(map_val) = value.as_mapping() {
-                    let mut env_var_value:Option<String> = None;
-                    let mut value:Option<String> = None;
+
+                if !has_value && let Some(default_val) = mapping_val.get("default") {
+                    if let Some(default_str) = default_val.as_str() {
+                        output.insert(String::from(key), String::from(default_str));
+                        has_value = true;
+                    }
+                }
+
+                if !has_value {
+                    let error_message = format!(
+                        "\
+                        Variable ({}) must be set to either a string value, \
+                        or a mapping with one or more of 'default' and 'env' values.",
+                        key
+                    );
+                    return Err(Error::other(error_message));
                 }
             }
-            return output;
         }
-        None
+
+        Ok(output)
     }
 
     pub fn from_config_spec(
@@ -118,12 +136,37 @@ impl ConfigData {
             )
         }
 
+        let mut vars: HashMap<String, String> = HashMap::new();
+        let mut urls: HashMap<String, String> = HashMap::new();
+
+        if let Some(spec_vars) = spec.vars {
+            match ConfigData::create_variables(spec_vars) {
+                Ok(vars_result) => {
+                    vars = vars_result;
+                }
+                Err(e) => {
+                    panic!("Error Decoding Config {}:\n{}", path.display(), e);
+                }
+            }
+        }
+
+        if let Some(spec_urls) = spec.urls {
+            match ConfigData::create_variables(spec_urls) {
+                Ok(urls_result) => {
+                    urls = urls_result;
+                }
+                Err(e) => {
+                    panic!("Error Decoding Config {}:\n{}", path.display(), e);
+                }
+            }
+        }
+
         ConfigData {
             path: path.clone(),
             parent,
             step_sets,
-            vars: spec.vars,
-            urls: spec.urls,
+            vars,
+            urls,
         }
     }
 
