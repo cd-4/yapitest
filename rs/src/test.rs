@@ -4,7 +4,7 @@ use serde_yaml::{Value, from_value};
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::config::{ConfigData, ConfigSpec};
 use crate::test_step::{TestStep, TestStepSpec};
@@ -12,7 +12,7 @@ use crate::test_step::{TestStep, TestStepSpec};
 pub struct Test {
     name: String,
     path: PathBuf,
-    config: Option<Arc<ConfigData>>,
+    config: Option<Arc<RwLock<ConfigData>>>,
     groups: Option<Vec<String>>,
     setup: Option<String>,
     teardown: Option<String>,
@@ -39,15 +39,23 @@ impl Test {
         self.config.is_some()
     }
 
-    pub fn set_config(&mut self, config: Arc<ConfigData>) {
+    pub fn set_config(&mut self, config: Arc<RwLock<ConfigData>>) {
+        match &self.config {
+            Some(cfg) => {
+                cfg.write().unwrap().set_parent(Arc::clone(&config));
+            }
+            None => {
+                self.config = Some(Arc::clone(&config));
+            }
+        }
         self.config = Some(config);
     }
 
     pub fn from_spec(path: PathBuf, name: String, spec: TestSpec) -> Result<Test> {
-        let mut config: Option<Arc<ConfigData>> = None;
+        let mut config: Option<Arc<RwLock<ConfigData>>> = None;
         if let Some(config_spec) = spec.config {
             let loaded_config = ConfigData::from_spec(&path, config_spec)?;
-            config = Some(Arc::new(loaded_config));
+            config = Some(Arc::new(RwLock::new(loaded_config)));
         }
         Ok(Test {
             name,

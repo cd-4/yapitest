@@ -7,7 +7,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -70,14 +70,14 @@ pub struct ConfigSpec {
 
 pub struct ConfigData {
     pub path: PathBuf,
-    pub parent: Option<Arc<ConfigData>>,
+    pub parent: Option<Arc<RwLock<ConfigData>>>,
     step_sets: Option<HashMap<String, TestStepGroup>>,
     vars: HashMap<String, String>,
     urls: HashMap<String, String>,
 }
 
 impl ConfigData {
-    pub fn set_parent(&mut self, parent: Arc<ConfigData>) {
+    pub fn set_parent(&mut self, parent: Arc<RwLock<ConfigData>>) {
         self.parent = Some(parent);
     }
 

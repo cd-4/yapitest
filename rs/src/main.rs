@@ -5,7 +5,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use walkdir::WalkDir;
 
 mod config;
@@ -86,33 +86,6 @@ fn try_load_file(path: &PathBuf) -> (Vec<Test>, Option<ConfigData>) {
     (vec![], None)
 }
 
-fn load_from_path(path: &PathBuf) -> (Vec<Test>, Vec<ConfigData>) {
-    let mut test_output: Vec<Test> = vec![];
-    let mut config_output: Vec<ConfigData> = vec![];
-
-    if path.is_dir() {
-        for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
-            if entry.path() == path || entry.path().is_dir() {
-                continue;
-            }
-
-            // println!("Entry: {}", entry.path().display());
-
-            let path_buf = entry.path().to_path_buf();
-            let (tests, configs) = load_from_path(&path_buf);
-            test_output.extend(tests);
-            config_output.extend(configs);
-        }
-    } else {
-        let (tests, configs) = try_load_file(path);
-        test_output.extend(tests);
-        config_output.extend(configs);
-    }
-
-    (test_output, config_output)
-    //(vec![], vec![])
-}
-
 #[derive(Parser, Debug)]
 #[command(version, about = "Simple example with positional args")]
 struct Args {
@@ -150,16 +123,6 @@ fn main2() {
         } else {
             panic!("Path \"{}\" does not exist. Exiting.", path_arg)
         }
-    }
-
-    // Gather All Tests & Configs
-    println!("Gathering Tests & Configs");
-    let mut tests: Vec<Test> = vec![];
-    let mut configs: Vec<ConfigData> = vec![];
-    for path in test_paths.iter() {
-        let (path_tests, path_configs) = load_from_path(path);
-        tests.extend(path_tests);
-        configs.extend(path_configs);
     }
 
     return;
@@ -205,7 +168,7 @@ fn get_config_in_dir(path: &PathBuf) -> Result<Option<ConfigData>> {
 }
 
 fn load_tests_from_file(
-    configs: &mut HashMap<PathBuf, Arc<ConfigData>>,
+    configs: &mut HashMap<PathBuf, Arc<RwLock<ConfigData>>>,
     path: &PathBuf,
 ) -> anyhow::Result<Vec<Test>, anyhow::Error> {
     if !is_test_file(path) {
@@ -217,9 +180,9 @@ fn load_tests_from_file(
     let (cfg_opt, mut tests) = Test::load_from_file(path)?;
 
     // If a config exists, set the test's config to it, and declare it as deepest config
-    if let Some(config) = cfg_opt.and_then(|v| Some(Arc::new(v))) {
-        deepest_config_key = Some(config.path.clone());
-        configs.insert(config.path.clone(), Arc::clone(&config));
+    if let Some(config) = cfg_opt.and_then(|v| Some(Arc::new(RwLock::new(v)))) {
+        deepest_config_key = Some(config.read().unwrap().path.clone());
+        configs.insert(config.read().unwrap().path.clone(), Arc::clone(&config));
         for test in tests.iter_mut() {
             test.set_config(Arc::clone(&config));
         }
@@ -228,7 +191,7 @@ fn load_tests_from_file(
     for ancestor in path.ancestors() {
         let ancestor_pb = ancestor.clone().to_path_buf();
 
-        let mut ancestor_config: Option<Arc<ConfigData>> = None;
+        let mut ancestor_config: Option<Arc<RwLock<ConfigData>>> = None;
 
         if let Some(anc_config) = configs.get(ancestor) {
             ancestor_config = Some(Arc::clone(&anc_config));
@@ -236,7 +199,7 @@ fn load_tests_from_file(
             match get_config_in_dir(&ancestor_pb) {
                 Ok(anc_config_opt) => {
                     if let Some(anc_config) = anc_config_opt {
-                        let arc_anc_config = Arc::new(anc_config);
+                        let arc_anc_config = Arc::new(RwLock::new(anc_config));
                         configs.insert(ancestor_pb.clone(), Arc::clone(&arc_anc_config));
                         ancestor_config = Some(Arc::clone(&arc_anc_config));
                     }
@@ -251,7 +214,10 @@ fn load_tests_from_file(
             if let Some(deep_key) = deepest_config_key {
                 if let Some(deepest_config_arc) = configs.get_mut(&deep_key) {
                     if let Some(deepest_config) = Arc::get_mut(deepest_config_arc) {
-                        deepest_config.set_parent(Arc::clone(&anc_config));
+                        deepest_config
+                            .write()
+                            .unwrap()
+                            .set_parent(Arc::clone(&anc_config));
                     }
                 }
             }
@@ -263,7 +229,7 @@ fn load_tests_from_file(
 }
 
 fn load_tests_in_dir(
-    configs: &mut HashMap<PathBuf, Arc<ConfigData>>,
+    configs: &mut HashMap<PathBuf, Arc<RwLock<ConfigData>>>,
     path: &PathBuf,
 ) -> anyhow::Result<Vec<Test>, anyhow::Error> {
     let mut output: Vec<Test> = vec![];
@@ -303,7 +269,7 @@ fn load_tests_in_dir(
 }
 
 fn load_tests(
-    configs: &mut HashMap<PathBuf, Arc<ConfigData>>,
+    configs: &mut HashMap<PathBuf, Arc<RwLock<ConfigData>>>,
     path: &PathBuf,
 ) -> anyhow::Result<Vec<Test>, anyhow::Error> {
     if path.is_dir() {
@@ -336,7 +302,7 @@ fn main() {
         }
     }
 
-    let mut configs: HashMap<PathBuf, Arc<ConfigData>> = HashMap::new();
+    let mut configs: HashMap<PathBuf, Arc<RwLock<ConfigData>>> = HashMap::new();
     let mut tests: Vec<Test> = vec![];
     println!("Loading Tests");
     for path in test_paths.iter() {
@@ -353,18 +319,6 @@ fn main() {
     println!("Found Tests");
     for (k, v) in configs.iter() {
         println!("{}", k.display());
-    }
-
-    return;
-
-    // Gather All Tests & Configs
-    println!("Gathering Tests & Configs");
-    let mut tests: Vec<Test> = vec![];
-    let mut configs: Vec<ConfigData> = vec![];
-    for path in test_paths.iter() {
-        let (path_tests, path_configs) = load_from_path(path);
-        tests.extend(path_tests);
-        configs.extend(path_configs);
     }
 
     return;
