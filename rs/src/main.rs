@@ -221,6 +221,9 @@ fn load_tests_from_file(
                     .set_parent(Arc::clone(&anc_config));
             }
 
+            for test in tests.iter_mut() {
+                test.add_config(Arc::clone(&anc_config));
+            }
             deepest_config_key = Some(ancestor_pb);
         }
     }
