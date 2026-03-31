@@ -101,48 +101,6 @@ struct Args {
     include: Vec<String>,
 }
 
-fn main2() {
-    let args = Args::parse();
-
-    // Validate Paths Exist
-
-    let mut test_paths: Vec<PathBuf> = Vec::new();
-    for path_arg in args.paths.iter() {
-        let path = PathBuf::from(path_arg);
-        if path.exists() {
-            let absolute_path = std::fs::canonicalize(&path);
-            match absolute_path {
-                Ok(p) => {
-                    test_paths.push(p);
-                }
-                Err(e) => {
-                    eprintln!("{}", e);
-                    panic!("Error Unwrapping Path {}", path_arg);
-                }
-            }
-        } else {
-            panic!("Path \"{}\" does not exist. Exiting.", path_arg)
-        }
-    }
-
-    return;
-
-    println!("Groups");
-    for path in args.group.iter() {
-        println!("{}", path);
-    }
-
-    println!("Exclude");
-    for path in args.exclude.iter() {
-        println!("{}", path);
-    }
-
-    println!("Include");
-    for path in args.include.iter() {
-        println!("{}", path);
-    }
-}
-
 fn get_config_in_dir(path: &PathBuf) -> Result<Option<ConfigData>> {
     let yapitest_config_names = [
         "yapitest-config.yaml",
@@ -189,7 +147,7 @@ fn load_tests_from_file(
     }
 
     for ancestor in path.ancestors() {
-        let ancestor_pb = ancestor.clone().to_path_buf();
+        let ancestor_pb = ancestor.to_path_buf();
 
         let mut ancestor_config: Option<Arc<RwLock<ConfigData>>> = None;
 
@@ -227,6 +185,11 @@ fn load_tests_from_file(
                 test.add_config(Arc::clone(&anc_config));
             }
             deepest_config_key = Some(ancestor_pb);
+        }
+
+        // Found root of file system or `.git` file. Exit
+        if is_root_dir(&ancestor.to_path_buf()) {
+            break;
         }
     }
 
@@ -319,6 +282,10 @@ fn main() {
                 panic!("{}", e);
             }
         }
+    }
+
+    for test in tests.iter() {
+        println!("{}", test.name);
     }
 
     println!("Found Tests");
