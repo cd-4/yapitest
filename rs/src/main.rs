@@ -211,16 +211,16 @@ fn load_tests_from_file(
         }
 
         if let Some(anc_config) = ancestor_config {
-            if let Some(deep_key) = deepest_config_key {
-                if let Some(deepest_config_arc) = configs.get_mut(&deep_key) {
-                    if let Some(deepest_config) = Arc::get_mut(deepest_config_arc) {
-                        deepest_config
-                            .write()
-                            .unwrap()
-                            .set_parent(Arc::clone(&anc_config));
-                    }
-                }
+            if let Some(deepest_config) = deepest_config_key
+                .and_then(|k| configs.get_mut(&k))
+                .and_then(|a| Arc::get_mut(a))
+            {
+                deepest_config
+                    .write()
+                    .unwrap()
+                    .set_parent(Arc::clone(&anc_config));
             }
+
             deepest_config_key = Some(ancestor_pb);
         }
     }
