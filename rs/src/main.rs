@@ -286,11 +286,16 @@ fn main() {
 
     for test in tests.iter() {
         println!("{}", test.name);
-    }
-
-    println!("Found Tests");
-    for (k, v) in configs.iter() {
-        println!("{}", k.display());
+        let mut test_config = &test.config;
+        loop {
+            if let Some(cfg) = test_config {
+                let unwrapped = cfg.read().unwrap();
+                println!("{}", unwrapped.path.display());
+                test_config = &test_config;
+            } else {
+                break;
+            }
+        }
     }
 
     return;

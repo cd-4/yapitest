@@ -12,7 +12,7 @@ use crate::test_step::{TestStep, TestStepSpec};
 pub struct Test {
     pub name: String,
     path: PathBuf,
-    config: Option<Arc<RwLock<ConfigData>>>,
+    pub config: Option<Arc<RwLock<ConfigData>>>,
     groups: Option<Vec<String>>,
     setup: Option<String>,
     teardown: Option<String>,
