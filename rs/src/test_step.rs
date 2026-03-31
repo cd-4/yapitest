@@ -1,9 +1,11 @@
+use crate::config::ConfigData;
 use reqwest::{Client, Method};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fmt::{Display, Error, Formatter};
 use std::str::FromStr;
+use std::sync::{Arc, Mutex, RwLock};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum TestStepFailureReason {
@@ -120,7 +122,7 @@ impl TestStep {
 
 pub trait RunnableTestStep {
     fn get_id(&self) -> Option<&String>;
-    fn run(&mut self);
+    fn run(&mut self, config: Option<Arc<RwLock<ConfigData>>>);
     fn get_status(&self) -> TestStepStatus;
 }
 
@@ -129,7 +131,7 @@ impl RunnableTestStep for TestStep {
         self.id.as_ref()
     }
 
-    fn run(&mut self) {
+    fn run(&mut self, config: Option<Arc<RwLock<ConfigData>>>) {
         /*
         let client = Client::new();
 

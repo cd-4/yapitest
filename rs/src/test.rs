@@ -1,4 +1,4 @@
-use anyhow::{Error, Result};
+use anyhow::{Error, Result, anyhow};
 use serde::Deserialize;
 use serde_yaml::{Value, from_value};
 use std::fs::File;
@@ -6,8 +6,8 @@ use std::io::BufReader;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
-use crate::config::{ConfigData, ConfigSpec};
-use crate::test_step::{TestStep, TestStepSpec};
+use crate::config::{ConfigData, ConfigSpec, TestStepGroupReference};
+use crate::test_step::{RunnableTestStep, TestStep, TestStepSpec, TestStepStatus};
 
 pub struct Test {
     pub name: String,
@@ -16,7 +16,7 @@ pub struct Test {
     pub groups: Option<Vec<String>>,
     setup: Option<String>,
     teardown: Option<String>,
-    steps: Vec<TestStep>,
+    steps: Vec<Arc<RwLock<dyn RunnableTestStep>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -24,7 +24,7 @@ pub struct Test {
 pub struct TestSpec {
     setup: Option<String>,
     teardown: Option<String>,
-    steps: Vec<TestStepSpec>,
+    steps: Vec<Value>,
     config: Option<ConfigSpec>,
     groups: Option<Vec<String>>,
 }
@@ -85,12 +85,34 @@ impl Test {
             let loaded_config = ConfigData::from_spec(&path, config_spec)?;
             config = Some(Arc::new(RwLock::new(loaded_config)));
         }
+
+        let mut test_steps: Vec<Arc<RwLock<dyn RunnableTestStep>>> = vec![];
+
+        for step in spec.steps.into_iter() {
+            match from_value::<TestStepSpec>(step.clone()) {
+                Ok(test_step_spec) => {
+                    let step = TestStep::from_spec(test_step_spec);
+                    test_steps.push(Arc::new(RwLock::new(step)));
+                }
+                Err(e) => {
+                    // Possible that it's using a test step defined in the config
+                    match step.clone().as_str() {
+                        Some(step_name) => {
+                            let step = TestStepGroupReference::from_id(step_name.to_string());
+                            test_steps.push(Arc::new(RwLock::new(step)));
+                        }
+                        None => return Err(anyhow!("Error Decoding Step in test {}", name)),
+                    }
+                }
+            }
+        }
+
         Ok(Test {
             name,
             path,
             setup: spec.setup,
             teardown: spec.teardown,
-            steps: spec.steps.into_iter().map(TestStep::from_spec).collect(),
+            steps: test_steps,
             config,
             groups: spec.groups,
         })
@@ -145,7 +167,10 @@ impl Test {
         Ok((config, tests))
     }
 
-    pub fn run(&self) {
+    pub fn run(&mut self) {
         println!("Running Test: {}", self.name);
+        for step in self.steps.iter_mut() {
+            //step.run();
+        }
     }
 }

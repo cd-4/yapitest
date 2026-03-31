@@ -19,10 +19,15 @@ pub struct TestStepGroupSpec {
 
 pub struct TestStepGroup {
     id: Option<String>,
-    steps: Vec<Rc<dyn RunnableTestStep>>,
+    steps: Vec<Arc<dyn RunnableTestStep>>,
     status: TestStepStatus,
     run_once: bool,
     has_run: bool,
+}
+
+pub struct TestStepGroupReference {
+    id: String,
+    status: TestStepStatus,
 }
 
 impl TestStepGroup {
@@ -34,13 +39,13 @@ impl TestStepGroup {
             once = true;
         }
 
-        let mut steps: Vec<Rc<dyn RunnableTestStep>> = vec![];
+        let mut steps: Vec<Arc<dyn RunnableTestStep>> = vec![];
         for step in spec.steps.iter() {
             if let Some(step_name) = step.as_str() {
                 panic!("Need to implement step names {}", step_name);
             } else if let Ok(test_step_spec) = from_value::<TestStepSpec>(step.clone()) {
                 let test_step = TestStep::from_spec(test_step_spec);
-                let test_step_rc: Rc<TestStep> = Rc::new(test_step);
+                let test_step_rc: Arc<TestStep> = Arc::new(test_step);
                 steps.push(test_step_rc);
             }
         }
@@ -239,12 +244,33 @@ impl ConfigData {
     */
 }
 
+impl TestStepGroupReference {
+    pub fn from_id(id: String) -> TestStepGroupReference {
+        TestStepGroupReference {
+            id,
+            status: TestStepStatus::NotRun,
+        }
+    }
+}
+
+impl RunnableTestStep for TestStepGroupReference {
+    fn get_id(&self) -> Option<&String> {
+        Some(&self.id)
+    }
+
+    fn run(&mut self, config: Option<Arc<RwLock<ConfigData>>>) {}
+
+    fn get_status(&self) -> TestStepStatus {
+        self.status
+    }
+}
+
 impl RunnableTestStep for TestStepGroup {
     fn get_id(&self) -> Option<&String> {
         self.id.as_ref()
     }
 
-    fn run(&mut self) {
+    fn run(&mut self, config: Option<Arc<RwLock<ConfigData>>>) {
         /*
         if self.has_run && self.run_once {
             return;

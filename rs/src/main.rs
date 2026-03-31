@@ -247,8 +247,8 @@ fn load_tests(
     }
 }
 
-fn run_tests(tests: Vec<Test>) {
-    for test in tests.iter() {
+fn run_tests(tests: &mut Vec<Test>) {
+    for test in tests.iter_mut() {
         test.run();
     }
 }
@@ -324,5 +324,5 @@ fn main() {
     }
 
     println!("Collected {} Tests", tests.len());
-    run_tests(tests);
+    run_tests(&mut tests);
 }
