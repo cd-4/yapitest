@@ -144,4 +144,6 @@ impl Test {
         }
         Ok((config, tests))
     }
+
+    pub fn run(&self) {}
 }
