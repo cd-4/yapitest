@@ -62,24 +62,26 @@ fn is_root_dir(path: &PathBuf) -> bool {
 }
 
 fn try_load_file(path: &PathBuf) -> (Vec<Test>, Option<ConfigData>) {
-    if is_test_file(path) {
-        // Try Load Test
-        if let Some(basename) = path.file_name() {
-            let (config, tests) = Test::load_test_file(path);
-            //println!("Test: {}", path.display());
-            return (tests, config);
-        }
-    } else if is_config_file(path) {
-        // Try Load Config File
-        if let Some(basename) = path.file_name() {
-            println!("Config: {}", path.display());
-            let new_config = ConfigData::from_file(None, path);
-            if !new_config.is_some() {
-                println!("CONFIG FAILED TO LOAD");
+    /*
+        if is_test_file(path) {
+            // Try Load Test
+            if let Some(basename) = path.file_name() {
+                let (config, tests) = Test::load_test_file(path);
+                //println!("Test: {}", path.display());
+                return (tests, config);
             }
-            return (vec![], new_config);
+        } else if is_config_file(path) {
+            // Try Load Config File
+            if let Some(basename) = path.file_name() {
+                println!("Config: {}", path.display());
+                let new_config = ConfigData::from_file(None, path);
+                if !new_config.is_some() {
+                    println!("CONFIG FAILED TO LOAD");
+                }
+                return (vec![], new_config);
+            }
         }
-    }
+    */
 
     (vec![], None)
 }
@@ -109,48 +111,6 @@ fn load_from_path(path: &PathBuf) -> (Vec<Test>, Vec<ConfigData>) {
 
     (test_output, config_output)
     //(vec![], vec![])
-}
-
-fn build_config_tree(mut configs: Vec<ConfigData>) -> Vec<Arc<Mutex<ConfigData>>> {
-    // Sort by path depth (shorter paths = higher in the tree = potential parents)
-    configs.sort_by_key(|c| c.path.components().count());
-
-    let mut arc_configs: Vec<Arc<Mutex<ConfigData>>> = Vec::with_capacity(configs.len());
-
-    // First pass: wrap every ConfigData in Arc<Mutex<...>>
-    for config in configs {
-        arc_configs.push(Arc::new(Mutex::new(config)));
-    }
-
-    // Second pass: link parents
-    for i in 0..arc_configs.len() {
-        let child_arc = &arc_configs[i];
-        let child_path = {
-            let guard = child_arc.lock().unwrap();
-            guard.path.clone()
-        };
-
-        // Look for the best (closest) parent
-        for j in 0..i {
-            // Only check previous (shallower) configs
-            let potential_parent_arc = &arc_configs[j];
-            let parent_dir = {
-                let guard = potential_parent_arc.lock().unwrap();
-                guard.path.parent().map(|p| p.to_path_buf())
-            };
-
-            if let Some(parent_dir) = parent_dir {
-                if child_path.starts_with(&parent_dir) {
-                    // Found a parent! Set it on the child
-                    let mut child_guard = child_arc.lock().unwrap();
-                    child_guard.set_parent(Some(Arc::clone(potential_parent_arc)));
-                    break; // Stop at the first (closest) parent
-                }
-            }
-        }
-    }
-
-    arc_configs
 }
 
 #[derive(Parser, Debug)]
@@ -202,22 +162,6 @@ fn main2() {
         configs.extend(path_configs);
     }
 
-    let configs = build_config_tree(configs);
-
-    for config in configs.iter() {
-        match config.lock() {
-            Ok(cfg) => {
-                println!("CONFIG: {}", cfg.path.display());
-                if cfg.parent.is_some() {
-                    println!("HAS PARENT: {}", cfg.path.display());
-                } else {
-                    println!("NO PARENT: {}", cfg.path.display());
-                }
-            }
-            Err(_e) => {}
-        }
-    }
-
     return;
 
     println!("Groups");
@@ -247,12 +191,12 @@ fn get_config_in_dir(path: &PathBuf) -> Result<Option<ConfigData>> {
         let mut config_path = path.clone();
         config_path.push(config_name);
         if config_path.exists() {
-            match ConfigData::from_file_new(&config_path) {
+            match ConfigData::from_file(&config_path) {
                 Ok(config) => {
                     return Ok(Some(config));
                 }
                 Err(e) => {
-                    return Err(anyhow!(e));
+                    return Err(anyhow!("{}", e));
                 }
             }
         }
@@ -261,7 +205,7 @@ fn get_config_in_dir(path: &PathBuf) -> Result<Option<ConfigData>> {
 }
 
 fn load_tests_from_file(
-    configs: &mut HashMap<PathBuf, ConfigData>,
+    configs: &mut HashMap<PathBuf, Arc<ConfigData>>,
     path: &PathBuf,
 ) -> anyhow::Result<Vec<Test>, anyhow::Error> {
     if !is_test_file(path) {
@@ -273,25 +217,29 @@ fn load_tests_from_file(
     let (cfg_opt, mut tests) = Test::load_from_file(path)?;
 
     // If a config exists, set the test's config to it, and declare it as deepest config
-    if let Some(config) = cfg_opt {
-        configs.insert(config.path.clone(), config);
+    if let Some(config) = cfg_opt.and_then(|v| Some(Arc::new(v))) {
         deepest_config_key = Some(config.path.clone());
+        configs.insert(config.path.clone(), Arc::clone(&config));
         for test in tests.iter_mut() {
-            test.set_config(&config);
+            test.set_config(Arc::clone(&config));
         }
     }
 
     for ancestor in path.ancestors() {
         let ancestor_pb = ancestor.clone().to_path_buf();
 
-        let mut ancestor_config: Option<ConfigData> = None;
+        let mut ancestor_config: Option<Arc<ConfigData>> = None;
 
         if let Some(anc_config) = configs.get(ancestor) {
-            ancestor_config = Some(*anc_config);
+            ancestor_config = Some(Arc::clone(&anc_config));
         } else {
             match get_config_in_dir(&ancestor_pb) {
-                Ok(anc_config) => {
-                    ancestor_config = anc_config;
+                Ok(anc_config_opt) => {
+                    if let Some(anc_config) = anc_config_opt {
+                        let arc_anc_config = Arc::new(anc_config);
+                        configs.insert(ancestor_pb.clone(), Arc::clone(&arc_anc_config));
+                        ancestor_config = Some(Arc::clone(&arc_anc_config));
+                    }
                 }
                 Err(e) => {
                     return Err(anyhow!(e));
@@ -301,8 +249,10 @@ fn load_tests_from_file(
 
         if let Some(anc_config) = ancestor_config {
             if let Some(deep_key) = deepest_config_key {
-                if let Some(deepest_config) = configs.get_mut(&deep_key) {
-                    deepest_config.set_parent(&anc_config);
+                if let Some(deepest_config_arc) = configs.get_mut(&deep_key) {
+                    if let Some(deepest_config) = Arc::get_mut(deepest_config_arc) {
+                        deepest_config.set_parent(Arc::clone(&anc_config));
+                    }
                 }
             }
             deepest_config_key = Some(ancestor_pb);
@@ -313,7 +263,7 @@ fn load_tests_from_file(
 }
 
 fn load_tests_in_dir(
-    configs: &mut HashMap<PathBuf, ConfigData>,
+    configs: &mut HashMap<PathBuf, Arc<ConfigData>>,
     path: &PathBuf,
 ) -> anyhow::Result<Vec<Test>, anyhow::Error> {
     let mut output: Vec<Test> = vec![];
@@ -353,7 +303,7 @@ fn load_tests_in_dir(
 }
 
 fn load_tests(
-    configs: &mut HashMap<PathBuf, ConfigData>,
+    configs: &mut HashMap<PathBuf, Arc<ConfigData>>,
     path: &PathBuf,
 ) -> anyhow::Result<Vec<Test>, anyhow::Error> {
     if path.is_dir() {
@@ -386,7 +336,7 @@ fn main() {
         }
     }
 
-    let mut configs: HashMap<PathBuf, ConfigData> = HashMap::new();
+    let mut configs: HashMap<PathBuf, Arc<ConfigData>> = HashMap::new();
     let mut tests: Vec<Test> = vec![];
     println!("Loading Tests");
     for path in test_paths.iter() {
@@ -415,22 +365,6 @@ fn main() {
         let (path_tests, path_configs) = load_from_path(path);
         tests.extend(path_tests);
         configs.extend(path_configs);
-    }
-
-    let configs = build_config_tree(configs);
-
-    for config in configs.iter() {
-        match config.lock() {
-            Ok(cfg) => {
-                println!("CONFIG: {}", cfg.path.display());
-                if cfg.parent.is_some() {
-                    println!("HAS PARENT: {}", cfg.path.display());
-                } else {
-                    println!("NO PARENT: {}", cfg.path.display());
-                }
-            }
-            Err(_e) => {}
-        }
     }
 
     return;

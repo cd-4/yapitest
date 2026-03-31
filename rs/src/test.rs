@@ -4,6 +4,7 @@ use serde_yaml::{Value, from_value};
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use crate::config::{ConfigData, ConfigSpec};
 use crate::test_step::{TestStep, TestStepSpec};
@@ -11,7 +12,7 @@ use crate::test_step::{TestStep, TestStepSpec};
 pub struct Test {
     name: String,
     path: PathBuf,
-    config: Option<ConfigData>,
+    config: Option<Arc<ConfigData>>,
     groups: Option<Vec<String>>,
     setup: Option<String>,
     teardown: Option<String>,
@@ -38,16 +39,17 @@ impl Test {
         self.config.is_some()
     }
 
-    pub fn set_config(&mut self, config: &ConfigData) {
+    pub fn set_config(&mut self, config: Arc<ConfigData>) {
         self.config = Some(config);
     }
 
-    pub fn from_spec(path: PathBuf, name: String, spec: TestSpec) -> Test {
-        let mut config: Option<ConfigData> = None;
+    pub fn from_spec(path: PathBuf, name: String, spec: TestSpec) -> Result<Test> {
+        let mut config: Option<Arc<ConfigData>> = None;
         if let Some(config_spec) = spec.config {
-            config = Some(ConfigData::from_config_spec(&path, None, config_spec));
+            let loaded_config = ConfigData::from_spec(&path, config_spec)?;
+            config = Some(Arc::new(loaded_config));
         }
-        Test {
+        Ok(Test {
             name,
             path,
             setup: spec.setup,
@@ -55,7 +57,7 @@ impl Test {
             steps: spec.steps.into_iter().map(TestStep::from_spec).collect(),
             config,
             groups: spec.groups,
-        }
+        })
     }
 
     pub fn load_from_file(path: &PathBuf) -> Result<(Option<ConfigData>, Vec<Test>), Error> {
@@ -78,11 +80,13 @@ impl Test {
                                 if let Some(test_value) = mapping.get(key) {
                                     match from_value::<TestSpec>(test_value.clone()) {
                                         Ok(test_spec) => {
-                                            tests.push(Test::from_spec(
+                                            let test = Test::from_spec(
                                                 path.clone(),
                                                 key.to_string(),
                                                 test_spec,
-                                            ));
+                                            )?;
+
+                                            tests.push(test);
                                         }
                                         Err(e) => {
                                             panic!(
@@ -104,56 +108,5 @@ impl Test {
             }
         }
         Ok((config, tests))
-    }
-
-    pub fn load_test_file(path: &PathBuf) -> (Option<ConfigData>, Vec<Test>) {
-        let mut config: Option<ConfigData> = None;
-        let mut tests: Vec<Test> = vec![];
-
-        if let Ok(file) = File::open(path) {
-            let reader = BufReader::new(file);
-            let test_file_result = serde_yaml::from_reader::<_, Value>(reader);
-            match test_file_result {
-                Ok(tests_file) => {
-                    println!("Loaded Test File");
-
-                    if let Some(config_value) = tests_file.get("config") {
-                        config = ConfigData::from_value(None, config_value.clone(), path);
-                    }
-
-                    if let Some(mapping) = tests_file.as_mapping() {
-                        for key in mapping.keys().filter_map(|v| v.as_str()) {
-                            if is_test_name(key.to_string()) {
-                                if let Some(test_value) = mapping.get(key) {
-                                    match from_value::<TestSpec>(test_value.clone()) {
-                                        Ok(test_spec) => {
-                                            tests.push(Test::from_spec(
-                                                path.clone(),
-                                                key.to_string(),
-                                                test_spec,
-                                            ));
-                                            //println!("Loaded Test Data: {:?}", test_spec);
-                                        }
-                                        Err(e) => {
-                                            panic!(
-                                                "Failed to parse test: {} at {}\n{}",
-                                                key,
-                                                path.display(),
-                                                e
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                            eprintln!("Key: {}", key);
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Error Loading Test File: {}\n{}", path.display(), e);
-                }
-            }
-        }
-        (config, tests)
     }
 }

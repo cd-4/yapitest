@@ -68,17 +68,16 @@ pub struct ConfigSpec {
     urls: Option<HashMap<String, Value>>,
 }
 
-#[derive(Copy)]
 pub struct ConfigData {
     pub path: PathBuf,
-    parent: Option<&ConfigData>,
+    pub parent: Option<Arc<ConfigData>>,
     step_sets: Option<HashMap<String, TestStepGroup>>,
     vars: HashMap<String, String>,
     urls: HashMap<String, String>,
 }
 
 impl ConfigData {
-    pub fn set_parent(&mut self, parent: &ConfigData) {
+    pub fn set_parent(&mut self, parent: Arc<ConfigData>) {
         self.parent = Some(parent);
     }
 
@@ -166,55 +165,6 @@ impl ConfigData {
         })
     }
 
-    pub fn from_config_spec(
-        path: &PathBuf,
-        parent: Option<Arc<Mutex<ConfigData>>>,
-        spec: ConfigSpec,
-    ) -> ConfigData {
-        let mut step_sets: Option<HashMap<String, TestStepGroup>> = None;
-        if let Some(step_set_specs) = spec.step_sets {
-            step_sets = Some(
-                step_set_specs
-                    .into_iter()
-                    .map(|(k, v)| (k.clone(), TestStepGroup::from_spec(k.clone(), v)))
-                    .collect(),
-            )
-        }
-
-        let mut vars: HashMap<String, String> = HashMap::new();
-        let mut urls: HashMap<String, String> = HashMap::new();
-
-        if let Some(spec_vars) = spec.vars {
-            match ConfigData::create_variables(spec_vars) {
-                Ok(vars_result) => {
-                    vars = vars_result;
-                }
-                Err(e) => {
-                    panic!("Error Decoding Config {}:\n{}", path.display(), e);
-                }
-            }
-        }
-
-        if let Some(spec_urls) = spec.urls {
-            match ConfigData::create_variables(spec_urls) {
-                Ok(urls_result) => {
-                    urls = urls_result;
-                }
-                Err(e) => {
-                    panic!("Error Decoding Config {}:\n{}", path.display(), e);
-                }
-            }
-        }
-
-        ConfigData {
-            path: path.clone(),
-            parent,
-            step_sets,
-            vars,
-            urls,
-        }
-    }
-
     pub fn spec_from_val(value: &Value) -> anyhow::Result<ConfigSpec> {
         match from_value::<ConfigSpec>(value.clone()) {
             Ok(config_spec) => Ok(config_spec),
@@ -232,46 +182,30 @@ impl ConfigData {
         }
     }
 
-    pub fn spec_from_file(path: &PathBuf) -> Option<ConfigSpec> {
+    pub fn spec_from_file(path: &PathBuf) -> Result<ConfigSpec> {
         if let Ok(file) = File::open(path) {
             let reader = BufReader::new(file);
             let config_file_result = serde_yaml::from_reader::<_, Value>(reader);
             match config_file_result {
                 Ok(config_file) => {
-                    return ConfigData::spec_from_value(config_file);
+                    return ConfigData::spec_from_val(&config_file);
                 }
                 Err(e) => {
-                    eprintln!("Error Loading Config File: {}\n{}", path.display(), e);
+                    return Err(anyhow!(e));
                 }
             }
         } else {
-            eprintln!("Error Reading Config File: {}", path.display());
+            return Err(anyhow!("Error Reading Config File: {}", path.display()));
         }
-        None
     }
 
     pub fn from_val(value: &Value, path: &PathBuf) -> Result<ConfigData> {
         ConfigData::spec_from_val(value).and_then(|v| ConfigData::from_spec(path, v))
     }
 
-    pub fn from_value(
-        parent: Option<Arc<Mutex<ConfigData>>>,
-        value: Value,
-        path: &PathBuf,
-    ) -> Option<ConfigData> {
-        if let Some(spec) = ConfigData::spec_from_value(value) {
-            return Some(ConfigData::from_config_spec(path, parent, spec));
-        }
-        None
-    }
-
-    pub fn from_file_new(path: &PathBuf) -> Result<ConfigData> {}
-
-    pub fn from_file(parent: Option<Arc<Mutex<ConfigData>>>, path: &PathBuf) -> Option<ConfigData> {
-        if let Some(spec) = ConfigData::spec_from_file(path) {
-            return Some(ConfigData::from_config_spec(path, parent, spec));
-        }
-        None
+    pub fn from_file(path: &PathBuf) -> Result<ConfigData> {
+        let spec = ConfigData::spec_from_file(path)?;
+        ConfigData::from_spec(path, spec)
     }
 
     /*
