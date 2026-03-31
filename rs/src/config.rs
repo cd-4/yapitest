@@ -81,13 +81,6 @@ impl ConfigData {
         self.parent = Some(parent);
     }
 
-    pub fn show_path(&self) {
-        println!("{}", self.path.display());
-        if let Some(p) = &self.parent {
-            p.read().unwrap().show_path();
-        }
-    }
-
     fn create_variables(
         spec_vars: HashMap<String, Value>,
     ) -> Result<HashMap<String, String>, Error> {

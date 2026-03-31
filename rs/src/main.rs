@@ -284,20 +284,47 @@ fn main() {
         }
     }
 
-    return;
+    let mut filtered_tests: Vec<Test> = vec![];
 
     println!("Groups");
     for path in args.group.iter() {
         println!("{}", path);
     }
 
-    println!("Exclude");
-    for path in args.exclude.iter() {
-        println!("{}", path);
+    fn contains_group(test: &Test, groups: &Vec<&String>) -> bool {
+        if let Some(test_groups) = &test.groups {
+            for group in groups.iter() {
+                if test_groups.contains(group) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
-    println!("Include");
-    for path in args.include.iter() {
-        println!("{}", path);
+    fn contains_text(test: &Test, texts: &Vec<&String>) -> bool {
+        for text in texts.iter() {
+            if test.name.contains(*text) {
+                return true;
+            }
+        }
+        false
     }
+
+    if !args.group.is_empty() {
+        let groups: Vec<&String> = args.group.iter().collect();
+        tests.retain(|t| contains_group(t, &groups));
+    }
+
+    if !args.include.is_empty() {
+        let includes: Vec<&String> = args.include.iter().collect();
+        tests.retain(|t| contains_text(t, &includes));
+    }
+
+    if !args.exclude.is_empty() {
+        let excludes: Vec<&String> = args.exclude.iter().collect();
+        tests.retain(|t| !contains_text(t, &excludes));
+    }
+
+    println!("Collected {} Tests", tests.len());
 }

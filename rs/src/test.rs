@@ -13,7 +13,7 @@ pub struct Test {
     pub name: String,
     path: PathBuf,
     pub config: Option<Arc<RwLock<ConfigData>>>,
-    groups: Option<Vec<String>>,
+    pub groups: Option<Vec<String>>,
     setup: Option<String>,
     teardown: Option<String>,
     steps: Vec<TestStep>,
