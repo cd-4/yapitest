@@ -184,7 +184,7 @@ fn load_tests_from_file(
         deepest_config_key = Some(config.read().unwrap().path.clone());
         configs.insert(config.read().unwrap().path.clone(), Arc::clone(&config));
         for test in tests.iter_mut() {
-            test.set_config(Arc::clone(&config));
+            test.add_config(Arc::clone(&config));
         }
     }
 

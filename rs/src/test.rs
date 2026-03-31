@@ -35,6 +35,34 @@ fn is_test_name(key: String) -> bool {
 }
 
 impl Test {
+    pub fn add_config(&mut self, config: Arc<RwLock<ConfigData>>) {
+        match &self.config {
+            Some(cfg) => {
+                let o_new_config_dir = config.read().unwrap().path.clone();
+                let o_current_config_dir = cfg.read().unwrap().path.clone();
+
+                if let (Some(new_dir), Some(current_dir)) =
+                    (o_new_config_dir.parent(), o_current_config_dir.parent())
+                {
+                    if current_dir.starts_with(new_dir) {
+                        cfg.write().unwrap().set_parent(config);
+                    } else if new_dir.starts_with(current_dir) {
+                        config.write().unwrap().set_parent(Arc::clone(cfg));
+                    } else {
+                        panic!(
+                            "ERROR: Cannot set parentage with unrelated configs {} {}",
+                            new_dir.display(),
+                            current_dir.display()
+                        );
+                    }
+                }
+            }
+            None => {
+                self.config = Some(Arc::clone(&config));
+            }
+        }
+    }
+
     pub fn has_config(&self) -> bool {
         self.config.is_some()
     }
