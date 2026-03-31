@@ -67,6 +67,30 @@ pub struct TestStep {
     failure_reason: TestStepFailureReason,
 }
 
+pub struct TestStepResult {
+    response_data: Option<Value>,
+    status: TestStepFailureReason,
+    failure_message: Option<String>,
+}
+
+impl TestStepResult {
+    pub fn make_failure(reason: TestStepFailureReason, message: String) -> TestStepResult {
+        TestStepResult {
+            status: reason,
+            response_data: None,
+            failure_message: Some(message),
+        }
+    }
+
+    pub fn make_success(response_data: Value) -> TestStepResult {
+        TestStepResult {
+            status: TestStepFailureReason::NoFailure,
+            response_data: Some(response_data),
+            failure_message: None,
+        }
+    }
+}
+
 impl TestStep {
     fn get_method(method_str: Option<String>) -> Method {
         if let Some(method) = method_str {
@@ -122,7 +146,11 @@ impl TestStep {
 
 pub trait RunnableTestStep {
     fn get_id(&self) -> Option<&String>;
-    fn run(&mut self, config: Option<Arc<RwLock<ConfigData>>>);
+    fn run(
+        &mut self,
+        config: Option<Arc<RwLock<ConfigData>>>,
+        prior_steps: &HashMap<String, TestStepResult>,
+    ) -> TestStepResult;
     fn get_status(&self) -> TestStepStatus;
 }
 
@@ -131,7 +159,11 @@ impl RunnableTestStep for TestStep {
         self.id.as_ref()
     }
 
-    fn run(&mut self, config: Option<Arc<RwLock<ConfigData>>>) {
+    fn run(
+        &mut self,
+        config: Option<Arc<RwLock<ConfigData>>>,
+        prior_steps: &HashMap<String, TestStepResult>,
+    ) -> TestStepResult {
         /*
         let client = Client::new();
 

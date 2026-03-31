@@ -1,4 +1,4 @@
-use crate::test_step::{RunnableTestStep, TestStep, TestStepSpec, TestStepStatus};
+use crate::test_step::{RunnableTestStep, TestStep, TestStepResult, TestStepSpec, TestStepStatus};
 use anyhow::{Error, Result, anyhow};
 use serde::Deserialize;
 use serde_yaml::{Value, from_value};
@@ -258,7 +258,12 @@ impl RunnableTestStep for TestStepGroupReference {
         Some(&self.id)
     }
 
-    fn run(&mut self, config: Option<Arc<RwLock<ConfigData>>>) {}
+    fn run(
+        &mut self,
+        config: Option<Arc<RwLock<ConfigData>>>,
+        prior_steps: &HashMap<String, TestStepResult>,
+    ) -> TestStepResult {
+    }
 
     fn get_status(&self) -> TestStepStatus {
         self.status
@@ -270,21 +275,11 @@ impl RunnableTestStep for TestStepGroup {
         self.id.as_ref()
     }
 
-    fn run(&mut self, config: Option<Arc<RwLock<ConfigData>>>) {
-        /*
-        if self.has_run && self.run_once {
-            return;
-        }
-        self.status = TestStepStatus::InProgress;
-        for step in self.steps.iter_mut() {
-            step.run();
-            if step.get_status() == TestStepStatus::Fail {
-                self.status = TestStepStatus::Fail;
-                return;
-            }
-        }
-        self.status = TestStepStatus::Pass;
-        */
+    fn run(
+        &mut self,
+        config: Option<Arc<RwLock<ConfigData>>>,
+        prior_steps: &HashMap<String, TestStepResult>,
+    ) -> TestStepResult {
     }
 
     fn get_status(&self) -> TestStepStatus {
