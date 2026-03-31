@@ -247,6 +247,12 @@ fn load_tests(
     }
 }
 
+fn run_tests(tests: Vec<Test>) {
+    for test in tests.iter() {
+        test.run();
+    }
+}
+
 fn main() {
     let args = Args::parse();
 
@@ -318,4 +324,5 @@ fn main() {
     }
 
     println!("Collected {} Tests", tests.len());
+    run_tests(tests);
 }

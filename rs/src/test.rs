@@ -145,5 +145,7 @@ impl Test {
         Ok((config, tests))
     }
 
-    pub fn run(&self) {}
+    pub fn run(&self) {
+        println!("Running Test: {}", self.name);
+    }
 }
