@@ -71,7 +71,7 @@ pub struct ConfigSpec {
 #[derive(Copy)]
 pub struct ConfigData {
     pub path: PathBuf,
-    pub parent: Option<&ConfigData>,
+    parent: Option<&ConfigData>,
     step_sets: Option<HashMap<String, TestStepGroup>>,
     vars: HashMap<String, String>,
     urls: HashMap<String, String>,
