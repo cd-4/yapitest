@@ -193,6 +193,7 @@ fn load_tests_from_file(
 
         let mut ancestor_config: Option<Arc<RwLock<ConfigData>>> = None;
 
+        // Get Ancestor Config if it exists
         if let Some(anc_config) = configs.get(ancestor) {
             ancestor_config = Some(Arc::clone(&anc_config));
         } else {
@@ -210,6 +211,7 @@ fn load_tests_from_file(
             }
         }
 
+        // Set Ancestor config as parent of tests & configs
         if let Some(anc_config) = ancestor_config {
             if let Some(deepest_config) = deepest_config_key
                 .and_then(|k| configs.get_mut(&k))
