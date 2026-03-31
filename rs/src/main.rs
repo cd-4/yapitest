@@ -250,8 +250,6 @@ fn load_tests(
 fn main() {
     let args = Args::parse();
 
-    // Validate Paths Exist
-
     let mut test_paths: Vec<PathBuf> = Vec::new();
     for path_arg in args.paths.iter() {
         let path = PathBuf::from(path_arg);
@@ -272,7 +270,7 @@ fn main() {
 
     let mut configs: HashMap<PathBuf, Arc<RwLock<ConfigData>>> = HashMap::new();
     let mut tests: Vec<Test> = vec![];
-    println!("Loading Tests");
+    println!("Collecting Tests...");
     for path in test_paths.iter() {
         match load_tests(&mut configs, path) {
             Ok(found_tests) => {
@@ -282,13 +280,6 @@ fn main() {
                 panic!("{}", e);
             }
         }
-    }
-
-    let mut filtered_tests: Vec<Test> = vec![];
-
-    println!("Groups");
-    for path in args.group.iter() {
-        println!("{}", path);
     }
 
     fn contains_group(test: &Test, groups: &Vec<&String>) -> bool {

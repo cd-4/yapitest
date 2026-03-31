@@ -105,7 +105,6 @@ impl Test {
             let test_file_result = serde_yaml::from_reader::<_, Value>(reader);
             match test_file_result {
                 Ok(test_file) => {
-                    println!("Loaded Raw Test File");
                     if let Some(config_value) = test_file.get("config") {
                         config = Some(ConfigData::from_val(&config_value, path)?);
                     }
