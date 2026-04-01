@@ -1,13 +1,13 @@
 use crate::config::ConfigData;
-use anyhow::{Error, Result, anyhow};
+use anyhow::{Result, anyhow};
+use async_trait::async_trait;
 use reqwest::{Client, Method};
 use serde::Deserialize;
-use serde_json::{Value, json};
-use serde_json_assert::{assert_json_eq, assert_json_include};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum TestStepFailureReason {
@@ -224,6 +224,7 @@ impl TestStep {
     }
 }
 
+#[async_trait]
 pub trait RunnableTestStep {
     fn get_id(&self) -> Option<&String>;
     async fn run(
@@ -234,6 +235,7 @@ pub trait RunnableTestStep {
     fn get_status(&self) -> TestStepStatus;
 }
 
+#[async_trait]
 impl RunnableTestStep for TestStep {
     fn get_id(&self) -> Option<&String> {
         self.id.as_ref()

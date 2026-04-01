@@ -1,5 +1,6 @@
 use crate::test_step::{RunnableTestStep, TestStep, TestStepResult, TestStepSpec, TestStepStatus};
 use anyhow::{Error, Result, anyhow};
+use async_trait::async_trait;
 use serde::Deserialize;
 use serde_yaml::{Value, from_value};
 use std::collections::HashMap;
@@ -286,6 +287,7 @@ impl TestStepGroupReference {
     }
 }
 
+#[async_trait]
 impl RunnableTestStep for TestStepGroupReference {
     fn get_id(&self) -> Option<&String> {
         Some(&self.id)
@@ -303,6 +305,7 @@ impl RunnableTestStep for TestStepGroupReference {
     }
 }
 
+#[async_trait]
 impl RunnableTestStep for TestStepGroup {
     fn get_id(&self) -> Option<&String> {
         self.id.as_ref()
