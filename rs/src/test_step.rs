@@ -241,6 +241,8 @@ impl RunnableTestStep for TestStep {
         self.id.as_ref()
     }
 
+    fn clean_expected_response(&self, expected_response: &mut Value) -> Value {}
+
     async fn run(
         &mut self,
         config: Option<Arc<RwLock<ConfigData>>>,
