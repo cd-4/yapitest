@@ -1,4 +1,5 @@
 use crate::config::ConfigData;
+use anyhow::{Error, Result, anyhow};
 use reqwest::{Client, Method};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -71,6 +72,8 @@ pub struct TestStep {
 
 pub struct TestStepResult {
     response_data: Option<Value>,
+    request_data: Option<Value>,
+    output_data: Option<Value>,
     status: TestStepFailureReason,
     failure_message: Option<String>,
 }
@@ -80,33 +83,49 @@ impl TestStepResult {
         TestStepResult {
             status: reason,
             response_data: None,
+            request_data: None,
+            output_data: None,
             failure_message: Some(message),
         }
     }
 
-    pub fn make_success(response_data: Value) -> TestStepResult {
+    pub fn make_success(
+        response_data: Value,
+        request_data: Value,
+        output_data: Value,
+    ) -> TestStepResult {
         TestStepResult {
             status: TestStepFailureReason::NoFailure,
             response_data: Some(response_data),
+            request_data: Some(request_data),
+            output_data: Some(output_data),
             failure_message: None,
         }
     }
 }
 
 impl TestStep {
-    fn get_url(&self, config: Option<ConfigData>) -> String {
+    fn get_url(&self, config: Option<Arc<RwLock<ConfigData>>>) -> Result<String> {
         // If URL is defined, return it
-        if let Some(url_val) = self.url {
+        if let Some(url_val) = &self.url {
             if url_val.starts_with("$") {
-                let mut config_key = url_val.copy();
+                let mut config_key = url_val.clone();
                 config_key.remove(0);
-                if let Some(config) = config {
-                    return config.get_string_value(key);
+                if let Some(cfg) = config {
+                    return cfg.read().unwrap().get_string_value(config_key);
                 }
             } else {
-                return url_val;
+                return Ok(url_val.clone());
             }
         }
+        if let Some(cfg) = config {
+            return cfg
+                .read()
+                .unwrap()
+                .get_string_value("urls.base".to_string());
+        }
+
+        return Err(anyhow!("Url not found"));
     }
 
     fn get_method(method_str: Option<String>) -> Method {
@@ -182,9 +201,10 @@ impl RunnableTestStep for TestStep {
         config: Option<Arc<RwLock<ConfigData>>>,
         prior_steps: &HashMap<String, TestStepResult>,
     ) -> TestStepResult {
-        /*
         let client = Client::new();
+        let url = self.get_url(config);
 
+        /*
         let res = client
             .post("https://api.example.com/login")
             .json(&payload)

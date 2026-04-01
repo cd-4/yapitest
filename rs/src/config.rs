@@ -30,6 +30,21 @@ pub struct TestStepGroupReference {
     status: TestStepStatus,
 }
 
+pub fn get_depth(key_vec: Vec<String>, value: Value) -> Result<Value> {
+    let mut cur_val = &value;
+    for key in key_vec.iter() {
+        match cur_val.get(key) {
+            Some(val) => {
+                cur_val = val;
+            }
+            None => {
+                return Err(anyhow!("{} not found", key_vec.join(".")));
+            }
+        }
+    }
+    Ok(cur_val.clone())
+}
+
 impl TestStepGroup {
     pub fn from_spec(id: String, spec: TestStepGroupSpec) -> TestStepGroup {
         let mut once = false;
@@ -82,7 +97,23 @@ pub struct ConfigData {
 }
 
 impl ConfigData {
-    pub fn get_string_value(&self, key: String) -> Result<String> {}
+    pub fn get_string_value(&self, key: String) -> Result<String> {
+        let string_keys: Vec<String> = key.split('.').map(|v| v.to_string()).collect();
+        if string_keys[0] == "urls" {
+            if let Some(url) = self.urls.get(&string_keys[1]) {
+                return Ok(url.clone());
+            }
+        }
+        if string_keys[0] == "vars" {
+            if let Some(var) = self.vars.get(&string_keys[1]) {
+                return Ok(var.clone());
+            }
+        }
+        if let Some(par) = &self.parent {
+            return par.read().unwrap().get_string_value(key);
+        }
+        Err(anyhow!("Url {} not found in any config", key))
+    }
 
     pub fn set_parent(&mut self, parent: Arc<RwLock<ConfigData>>) {
         self.parent = Some(parent);
