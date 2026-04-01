@@ -120,13 +120,13 @@ impl TestStep {
                         let mut config_key = value_str.to_string().clone();
                         config_key.remove(0);
                         let new_value = config.get_string_value(config_key)?;
-                        map.insert(*k, Value::from(new_value));
+                        map.insert(k.to_string(), Value::from(new_value));
                     }
                 } else if let Some(value_obj) = v.as_object() {
                 }
             }
         }
-        expected_response;
+        Err(anyhow!("TEMP ERROR"))
     }
 
     fn check_status_code(exp: Value, actual: u16) -> bool {
