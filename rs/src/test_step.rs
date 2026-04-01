@@ -3,8 +3,9 @@ use anyhow::{Error, Result, anyhow};
 use reqwest::{Client, Method};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use serde_json_assert::{assert_json_eq, assert_json_include};
 use std::collections::HashMap;
-use std::fmt::{Display, Error, Formatter};
+use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -14,6 +15,7 @@ pub enum TestStepFailureReason {
     NoResponse,
     ResponseError,
     StatusCodeError,
+    JsonDecodeError,
     ConfigurationError,
 }
 
@@ -47,7 +49,7 @@ pub struct TestStepSpec {
 }
 
 impl Display for TestStepStatus {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
             TestStepStatus::Pass => write!(f, "Pass"),
             TestStepStatus::InProgress => write!(f, "In Progress"),
@@ -106,8 +108,7 @@ impl TestStepResult {
 }
 
 impl TestStep {
-
-    fn check_status_code(exp:Value, actual:u16) -> bool {
+    fn check_status_code(exp: Value, actual: u16) -> bool {
         if let Some(int_val) = exp.as_u64() {
             return int_val == u64::from(actual);
         }
@@ -116,13 +117,29 @@ impl TestStep {
             if exp_str.len() != act_str.len() {
                 return false;
             }
-            return exp_str.chars().zip(act_str.chars()).all(|(exp_char, act_char)| {
-                exp_char == 'x' || exp_char == act_char
-            });
+            return exp_str
+                .chars()
+                .zip(act_str.chars())
+                .all(|(exp_char, act_char)| exp_char == 'x' || exp_char == act_char);
         }
         return false;
     }
 
+    fn check_response(expected: &Value, actual: &Value, full: bool) -> Result<()> {
+        let mut compare_mode = serde_json_assert::CompareMode::Inclusive;
+        if full {
+            compare_mode = serde_json_assert::CompareMode::Strict;
+        }
+
+        let config = serde_json_assert::Config::new(compare_mode).consider_array_sorting(false);
+        match serde_json_assert::assert_json_matches_no_panic(actual, expected, &config) {
+            Ok(()) => {}
+            Err(e) => {
+                return Err(anyhow!(e));
+            }
+        }
+        Ok(())
+    }
 
     fn get_identifier(&self, num_prior_steps: usize) -> String {
         match &self.id {
@@ -265,12 +282,6 @@ impl RunnableTestStep for TestStep {
 
         let full_url = format!("{}{}", url, path);
 
-        let res = client
-            .request(self.method.clone(), full_url)
-            .json(&self.request_data)
-            .send()
-            .await?;
-
         match client
             .request(self.method.clone(), full_url)
             .json(&self.request_data)
@@ -278,18 +289,44 @@ impl RunnableTestStep for TestStep {
             .await
         {
             Ok(response) => {
-
                 // Check if Status Code is correct
                 if let Some(exp_status_code) = &self.expected_status_code {
                     let actual_status_code = response.status().as_u16();
                     if !TestStep::check_status_code(exp_status_code.clone(), actual_status_code) {
-                        let failure_message = format!("Status Code incorrect. (Actual:{}, Expected:{})", exp_status_code.to_string(), actual_status_code.to_string());
-                        return Ok(TestStepResult::make_failure(TestStepFailureReason::StatusCodeError, failure_message));
+                        let failure_message = format!(
+                            "Status Code incorrect. (Actual:{}, Expected:{})",
+                            exp_status_code.to_string(),
+                            actual_status_code.to_string()
+                        );
+                        return Ok(TestStepResult::make_failure(
+                            TestStepFailureReason::StatusCodeError,
+                            failure_message,
+                        ));
                     }
                 }
 
-
-                let res = response.json::<Value>()
+                if let Some(expected_response) = &self.expected_response_data {
+                    match response.json::<Value>().await {
+                        Ok(actual_response) => {
+                            if let Err(e) =
+                                TestStep::check_response(&expected_response, &actual_response, true)
+                            {
+                                let failure_message = format!("Response Incorrect: {}", e);
+                                return Ok(TestStepResult::make_failure(
+                                    TestStepFailureReason::ResponseError,
+                                    failure_message,
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            let failure_message = format!("Error Decoding Json: {}", e);
+                            return Ok(TestStepResult::make_failure(
+                                TestStepFailureReason::JsonDecodeError,
+                                failure_message,
+                            ));
+                        }
+                    }
+                }
             }
             Err(e) => {
                 return Err(anyhow!("Error Sending Request: {}", e));
