@@ -14,6 +14,7 @@ pub enum TestStepFailureReason {
     NoResponse,
     ResponseError,
     StatusCodeError,
+    ConfigurationError,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -105,6 +106,13 @@ impl TestStepResult {
 }
 
 impl TestStep {
+    fn get_identifier(&self, num_prior_steps: usize) -> String {
+        match &self.id {
+            Some(id) => id.clone(),
+            None => num_prior_steps.to_string(),
+        }
+    }
+
     fn get_url(&self, config: Option<Arc<RwLock<ConfigData>>>) -> Result<String> {
         // If URL is defined, return it
         if let Some(url_val) = &self.url {
@@ -202,7 +210,46 @@ impl RunnableTestStep for TestStep {
         prior_steps: &HashMap<String, TestStepResult>,
     ) -> TestStepResult {
         let client = Client::new();
-        let url = self.get_url(config);
+
+        let mut url: String = "".to_string();
+
+        match self.get_url(config) {
+            Ok(actual_url) => {
+                url = actual_url;
+            }
+            Err(e) => {
+                let identifier = self.get_identifier(prior_steps.len());
+                return TestStepResult::make_failure(
+                    TestStepFailureReason::ConfigurationError,
+                    format!("No url specified for step {}", identifier),
+                );
+            }
+        }
+
+        match url.chars().last() {
+            Some(last_char) => {
+                if last_char == '/' {
+                    url.pop();
+                }
+            }
+            None => {}
+        }
+
+        let path = self.path;
+        match self.path.chars().next() {
+            Some(first_char) => {
+                if first_char != '/' {
+                    path.insert(0, '/');
+                }
+            }
+            None => {}
+        }
+
+        let full_url = format!("{}{}", url, path);
+
+        let res = client
+            .request(self.method, full_url)
+            .json(&self.request_data);
 
         /*
         let res = client
