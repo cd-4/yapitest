@@ -20,7 +20,7 @@ pub struct TestStepGroupSpec {
 
 pub struct TestStepGroup {
     id: Option<String>,
-    steps: Vec<Arc<dyn RunnableTestStep>>,
+    steps: Vec<Arc<dyn RunnableTestStep + Send + Sync>>,
     status: TestStepStatus,
     run_once: bool,
     has_run: bool,
