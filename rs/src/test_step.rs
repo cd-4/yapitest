@@ -36,6 +36,7 @@ pub struct TestStepAssertionSpec {
 pub struct TestStepSpec {
     id: Option<String>,
     path: String,
+    url: Option<String>,
     method: Option<String>,
     headers: Option<HashMap<String, String>>,
     data: Option<Value>,
@@ -57,6 +58,7 @@ impl Display for TestStepStatus {
 pub struct TestStep {
     id: Option<String>,
     path: String,
+    url: Option<String>,
     method: Method,
     header_data: HashMap<String, String>,
     request_data: Value,
@@ -92,6 +94,21 @@ impl TestStepResult {
 }
 
 impl TestStep {
+    fn get_url(&self, config: Option<ConfigData>) -> String {
+        // If URL is defined, return it
+        if let Some(url_val) = self.url {
+            if url_val.starts_with("$") {
+                let mut config_key = url_val.copy();
+                config_key.remove(0);
+                if let Some(config) = config {
+                    return config.get_string_value(key);
+                }
+            } else {
+                return url_val;
+            }
+        }
+    }
+
     fn get_method(method_str: Option<String>) -> Method {
         if let Some(method) = method_str {
             let upper_method = method.to_uppercase();
@@ -131,6 +148,7 @@ impl TestStep {
 
         TestStep {
             id: spec.id,
+            url: spec.url,
             path: spec.path,
             method: TestStep::get_method(spec.method),
             header_data,

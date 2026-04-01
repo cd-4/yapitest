@@ -82,6 +82,8 @@ pub struct ConfigData {
 }
 
 impl ConfigData {
+    pub fn get_string_value(&self, key: String) -> Result<String> {}
+
     pub fn set_parent(&mut self, parent: Arc<RwLock<ConfigData>>) {
         self.parent = Some(parent);
     }
