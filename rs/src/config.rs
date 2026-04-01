@@ -291,11 +291,11 @@ impl RunnableTestStep for TestStepGroupReference {
         Some(&self.id)
     }
 
-    fn run(
+    async fn run(
         &mut self,
         config: Option<Arc<RwLock<ConfigData>>>,
         prior_steps: &HashMap<String, TestStepResult>,
-    ) -> TestStepResult {
+    ) -> Result<TestStepResult> {
     }
 
     fn get_status(&self) -> TestStepStatus {
@@ -308,11 +308,11 @@ impl RunnableTestStep for TestStepGroup {
         self.id.as_ref()
     }
 
-    fn run(
+    async fn run(
         &mut self,
         config: Option<Arc<RwLock<ConfigData>>>,
         prior_steps: &HashMap<String, TestStepResult>,
-    ) -> TestStepResult {
+    ) -> Result<TestStepResult> {
     }
 
     fn get_status(&self) -> TestStepStatus {

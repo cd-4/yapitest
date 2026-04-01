@@ -106,6 +106,24 @@ impl TestStepResult {
 }
 
 impl TestStep {
+
+    fn check_status_code(exp:Value, actual:u16) -> bool {
+        if let Some(int_val) = exp.as_u64() {
+            return int_val == u64::from(actual);
+        }
+        if let Some(exp_str) = exp.as_str() {
+            let act_str = actual.to_string();
+            if exp_str.len() != act_str.len() {
+                return false;
+            }
+            return exp_str.chars().zip(act_str.chars()).all(|(exp_char, act_char)| {
+                exp_char == 'x' || exp_char == act_char
+            });
+        }
+        return false;
+    }
+
+
     fn get_identifier(&self, num_prior_steps: usize) -> String {
         match &self.id {
             Some(id) => id.clone(),
@@ -191,11 +209,11 @@ impl TestStep {
 
 pub trait RunnableTestStep {
     fn get_id(&self) -> Option<&String>;
-    fn run(
+    async fn run(
         &mut self,
         config: Option<Arc<RwLock<ConfigData>>>,
         prior_steps: &HashMap<String, TestStepResult>,
-    ) -> TestStepResult;
+    ) -> Result<TestStepResult>;
     fn get_status(&self) -> TestStepStatus;
 }
 
@@ -204,11 +222,11 @@ impl RunnableTestStep for TestStep {
         self.id.as_ref()
     }
 
-    fn run(
+    async fn run(
         &mut self,
         config: Option<Arc<RwLock<ConfigData>>>,
         prior_steps: &HashMap<String, TestStepResult>,
-    ) -> TestStepResult {
+    ) -> Result<TestStepResult> {
         let client = Client::new();
 
         let mut url: String = "".to_string();
@@ -219,10 +237,10 @@ impl RunnableTestStep for TestStep {
             }
             Err(e) => {
                 let identifier = self.get_identifier(prior_steps.len());
-                return TestStepResult::make_failure(
+                return Ok(TestStepResult::make_failure(
                     TestStepFailureReason::ConfigurationError,
                     format!("No url specified for step {}", identifier),
-                );
+                ));
             }
         }
 
@@ -235,7 +253,7 @@ impl RunnableTestStep for TestStep {
             None => {}
         }
 
-        let path = self.path;
+        let mut path = self.path.clone();
         match self.path.chars().next() {
             Some(first_char) => {
                 if first_char != '/' {
@@ -248,8 +266,37 @@ impl RunnableTestStep for TestStep {
         let full_url = format!("{}{}", url, path);
 
         let res = client
-            .request(self.method, full_url)
-            .json(&self.request_data);
+            .request(self.method.clone(), full_url)
+            .json(&self.request_data)
+            .send()
+            .await?;
+
+        match client
+            .request(self.method.clone(), full_url)
+            .json(&self.request_data)
+            .send()
+            .await
+        {
+            Ok(response) => {
+
+                // Check if Status Code is correct
+                if let Some(exp_status_code) = &self.expected_status_code {
+                    let actual_status_code = response.status().as_u16();
+                    if !TestStep::check_status_code(exp_status_code.clone(), actual_status_code) {
+                        let failure_message = format!("Status Code incorrect. (Actual:{}, Expected:{})", exp_status_code.to_string(), actual_status_code.to_string());
+                        return Ok(TestStepResult::make_failure(TestStepFailureReason::StatusCodeError, failure_message));
+                    }
+                }
+
+
+                let res = response.json::<Value>()
+            }
+            Err(e) => {
+                return Err(anyhow!("Error Sending Request: {}", e));
+            }
+        }
+
+        return Err(anyhow!("Temporary Error"));
 
         /*
         let res = client
