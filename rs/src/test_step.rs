@@ -108,6 +108,27 @@ impl TestStepResult {
 }
 
 impl TestStep {
+    fn clean_expected_response(
+        &self,
+        config: ConfigData,
+        expected_response: &mut Value,
+    ) -> Result<Value> {
+        if let Some(map) = expected_response.as_object() {
+            for (k, v) in map.iter() {
+                if let Some(value_str) = v.as_str() {
+                    if value_str.starts_with("$") {
+                        let mut config_key = value_str.to_string().clone();
+                        config_key.remove(0);
+                        let new_value = config.get_string_value(config_key)?;
+                        map.insert(*k, Value::from(new_value));
+                    }
+                } else if let Some(value_obj) = v.as_object() {
+                }
+            }
+        }
+        expected_response;
+    }
+
     fn check_status_code(exp: Value, actual: u16) -> bool {
         if let Some(int_val) = exp.as_u64() {
             return int_val == u64::from(actual);
@@ -240,8 +261,6 @@ impl RunnableTestStep for TestStep {
     fn get_id(&self) -> Option<&String> {
         self.id.as_ref()
     }
-
-    fn clean_expected_response(&self, expected_response: &mut Value) -> Value {}
 
     async fn run(
         &mut self,
