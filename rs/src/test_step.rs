@@ -146,7 +146,12 @@ impl TestStep {
         return false;
     }
 
+    fn check_response_obj(expected_obj: Value, actual_obj: Value, full: bool) -> Result<()> {}
+
     fn check_response(expected: &Value, actual: &Value, full: bool) -> Result<()> {
+        if let (Some(expected_obj), Some(actual_obj)) = (expected.as_object(), actual.as_object()) {
+        }
+
         let mut compare_mode = serde_json_assert::CompareMode::Inclusive;
         if full {
             compare_mode = serde_json_assert::CompareMode::Strict;
