@@ -110,6 +110,18 @@ impl TestStepResult {
 impl TestStep {
     fn get_expected_response(
         &mut self,
+        config: &Option<Arc<RwLock<ConfigData>>>,
+        expected_res: &Value,
+    ) -> Result<Value> {
+        if let Some(cfg) = config {
+            return self.get_expected_response_inner(&cfg.read().unwrap(), expected_res);
+        } else {
+            return Ok(expected_res.clone());
+        }
+    }
+
+    fn get_expected_response_inner(
+        &mut self,
         config: &ConfigData,
         expected_res: &Value,
     ) -> Result<Value> {
@@ -215,7 +227,7 @@ impl TestStep {
         }
     }
 
-    fn get_url(&self, config: Option<Arc<RwLock<ConfigData>>>) -> Result<String> {
+    fn get_url(&self, config: &Option<Arc<RwLock<ConfigData>>>) -> Result<String> {
         // If URL is defined, return it
         if let Some(url_val) = &self.url {
             if url_val.starts_with("$") {
@@ -317,7 +329,7 @@ impl RunnableTestStep for TestStep {
 
         let mut url: String = "".to_string();
 
-        match self.get_url(config) {
+        match self.get_url(&config) {
             Ok(actual_url) => {
                 url = actual_url;
             }
@@ -374,33 +386,29 @@ impl RunnableTestStep for TestStep {
                     }
                 }
 
-                if let Some(expected_response) = &self.expected_response_data {
+                if let Some(expected_response) = self.expected_response_data.clone() {
                     match response.json::<Value>().await {
                         Ok(actual_response) => {
-                            let mut expected = expected_response.clone();
-                            if let Some(cfg) = config {
-                                match self.get_expected_response(&cfg.read().unwrap(), &expected) {
-                                    Ok(response) => {
-                                        expected = response.clone();
-                                    }
-                                    Err(e) => {
-                                        let failure_message =
-                                            format!("Error Decoding Expected Response: {}", e);
+                            match self.get_expected_response(&config, &expected_response) {
+                                Ok(expected) => {
+                                    if let Err(e) =
+                                        TestStep::check_response(&expected, &actual_response, true)
+                                    {
+                                        let failure_message = format!("Response Incorrect: {}", e);
                                         return Ok(TestStepResult::make_failure(
                                             TestStepFailureReason::ResponseError,
                                             failure_message,
                                         ));
                                     }
                                 }
-                            }
-                            if let Err(e) =
-                                TestStep::check_response(&expected, &actual_response, true)
-                            {
-                                let failure_message = format!("Response Incorrect: {}", e);
-                                return Ok(TestStepResult::make_failure(
-                                    TestStepFailureReason::ResponseError,
-                                    failure_message,
-                                ));
+                                Err(e) => {
+                                    let failure_message =
+                                        format!("Unable to Decode Expected Response: {}", e);
+                                    return Ok(TestStepResult::make_failure(
+                                        TestStepFailureReason::ResponseError,
+                                        failure_message,
+                                    ));
+                                }
                             }
                         }
                         Err(e) => {
