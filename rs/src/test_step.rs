@@ -108,25 +108,66 @@ impl TestStepResult {
 }
 
 impl TestStep {
-    fn clean_expected_response(
-        &self,
-        config: ConfigData,
-        expected_response: &mut Value,
+    fn get_expected_response(
+        &mut self,
+        config: &ConfigData,
+        expected_res: &Value,
     ) -> Result<Value> {
-        if let Some(map) = expected_response.as_object() {
-            for (k, v) in map.iter() {
-                if let Some(value_str) = v.as_str() {
-                    if value_str.starts_with("$") {
-                        let mut config_key = value_str.to_string().clone();
-                        config_key.remove(0);
-                        let new_value = config.get_string_value(config_key)?;
-                        map.insert(k.to_string(), Value::from(new_value));
-                    }
-                } else if let Some(value_obj) = v.as_object() {
-                }
+        match self.clean_expected_response(config, expected_res) {
+            Ok(response) => {
+                return Ok(response);
+            }
+            Err(e) => {
+                return Err(e);
             }
         }
-        Err(anyhow!("TEMP ERROR"))
+    }
+
+    fn clean_expected_response(
+        &self,
+        config: &ConfigData,
+        expected_response: &Value,
+    ) -> Result<Value> {
+        let mut clone_res = expected_response.clone();
+        if let Some(ref mut map) = clone_res.as_object_mut() {
+            let keys: Vec<String> = map.iter().filter_map(|(k, _)| Some(k.clone())).collect();
+
+            for k in keys.iter() {
+                if let Some(value) = map.get_mut(k) {
+                    match self.clean_expected_response(&config, value) {
+                        Ok(new_value) => {
+                            map.insert(k.clone(), new_value);
+                        }
+                        Err(e) => {
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+            return Ok(Value::Object(map.clone()));
+        } else if let Some(ref mut vec) = clone_res.as_array_mut() {
+            // Build a completely new vector from the cleaned items
+            let mut cleaned_vec: Vec<Value> = Vec::with_capacity(vec.len());
+
+            for item in vec.iter_mut() {
+                let cleaned_item = self.clean_expected_response(config, item)?;
+                cleaned_vec.push(cleaned_item);
+            }
+
+            return Ok(Value::Array(cleaned_vec));
+        } else if let Some(str) = expected_response.as_str() {
+            if str.starts_with('$') {
+                let mut config_key = str.to_string();
+                config_key.remove(0); // remove leading $
+
+                let new_value = config.get_string_value(config_key)?;
+                return Ok(Value::String(new_value));
+            } else {
+                return Ok(expected_response.clone());
+            }
+        } else {
+            return Ok(expected_response.clone());
+        }
     }
 
     fn check_status_code(exp: Value, actual: u16) -> bool {
@@ -336,8 +377,24 @@ impl RunnableTestStep for TestStep {
                 if let Some(expected_response) = &self.expected_response_data {
                     match response.json::<Value>().await {
                         Ok(actual_response) => {
+                            let mut expected = expected_response.clone();
+                            if let Some(cfg) = config {
+                                match self.get_expected_response(&cfg.read().unwrap(), &expected) {
+                                    Ok(response) => {
+                                        expected = response.clone();
+                                    }
+                                    Err(e) => {
+                                        let failure_message =
+                                            format!("Error Decoding Expected Response: {}", e);
+                                        return Ok(TestStepResult::make_failure(
+                                            TestStepFailureReason::ResponseError,
+                                            failure_message,
+                                        ));
+                                    }
+                                }
+                            }
                             if let Err(e) =
-                                TestStep::check_response(&expected_response, &actual_response, true)
+                                TestStep::check_response(&expected, &actual_response, true)
                             {
                                 let failure_message = format!("Response Incorrect: {}", e);
                                 return Ok(TestStepResult::make_failure(
