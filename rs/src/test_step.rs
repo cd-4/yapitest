@@ -426,8 +426,6 @@ impl RunnableTestStep for TestStep {
 
         let full_url = format!("{}{}", url, path);
 
-        println!("{}", full_url);
-        println!("{}", self.request_data.to_string());
         match client
             .request(self.method.clone(), full_url)
             .json(&self.request_data)

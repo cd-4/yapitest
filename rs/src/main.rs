@@ -249,7 +249,8 @@ fn load_tests(
 
 async fn run_tests(tests: &mut Vec<Test>) {
     for test in tests.iter_mut() {
-        test.run().await;
+        println!("-----------------------------");
+        let _x = test.run().await;
     }
 }
 
