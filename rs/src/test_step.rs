@@ -228,6 +228,10 @@ pub fn clean_data(
     }
 */
 
+pub fn check_size(val: &Value, size_str: String) -> bool {
+    return false;
+}
+
 pub fn compare_data_objects(
     observed_object: &Map<String, Value>,
     expected_object: &Map<String, Value>,
@@ -300,6 +304,9 @@ pub fn compare_primitive_values(observed: &Value, expected: &Value, keys: String
             }
         } else if exp_str.starts_with("len") {
             let size_str = exp_str.strip_prefix("len").unwrap();
+            if !check_size(observed, size_str.to_string()) {
+                return Err(anyhow!("Size Incorrect TODO"));
+            }
         }
     }
 
