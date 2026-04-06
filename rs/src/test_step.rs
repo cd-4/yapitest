@@ -251,9 +251,7 @@ pub fn compare_data_objects(
 
         let expected = exp_value.unwrap();
 
-        if let Err(e) = compare_data_inner(observed, expected, full, format!("{}.{}", keys, key)) {
-            return Err(e);
-        }
+        compare_data_inner(observed, expected, full, format!("{}.{}", keys, key))?;
     }
 
     Ok(())
@@ -276,13 +274,13 @@ pub fn compare_array_objects(
         ));
     }
 
-    let mut index = 0;
-    for (observed, expected) in observed_object.iter().zip(expected_object.iter()) {
+    for (index, (observed, expected)) in observed_object
+        .iter()
+        .zip(expected_object.iter())
+        .enumerate()
+    {
         let new_keys = format!("{}.[{}]", keys, index);
-        if let Err(e) = compare_data_inner(observed, expected, full, new_keys) {
-            return Err(e);
-        }
-        index += 1;
+        compare_data_inner(observed, expected, full, new_keys)?;
     }
 
     Ok(())
@@ -291,15 +289,16 @@ pub fn compare_array_objects(
 pub fn compare_primitive_values(observed: &Value, expected: &Value, keys: String) -> Result<()> {
     if let Some(exp_str) = expected.as_str() {
         if exp_str.starts_with('+') {
-            let mut exp_type = exp_str.clone().to_string();
+            let mut exp_type = exp_str.to_string();
             exp_type.remove(0);
             if (exp_type == "str" || exp_type == "string") && observed.as_str().is_none() {
                 return Err(anyhow!("Expected string for {}", keys));
             } else if (exp_type == "float" || exp_type == "flt") && observed.as_f64().is_none() {
-                return Err(anyhow!("Expected string for {}", keys));
+                return Err(anyhow!("Expected float for {}", keys));
             } else if exp_type == "int" && observed.as_i64().is_none() {
                 return Err(anyhow!("Expected int for {}", keys));
             }
+        } else if exp_str.starts_with("len") {
         }
     }
 
