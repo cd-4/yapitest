@@ -299,6 +299,7 @@ pub fn compare_primitive_values(observed: &Value, expected: &Value, keys: String
                 return Err(anyhow!("Expected int for {}", keys));
             }
         } else if exp_str.starts_with("len") {
+            let size_str = exp_str.strip_prefix("len").unwrap();
         }
     }
 
