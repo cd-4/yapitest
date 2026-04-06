@@ -470,6 +470,14 @@ impl RunnableTestStep for TestStep {
                                             failure_message,
                                         ));
                                     }
+
+                                    return Ok(TestStepResult {
+                                        status: TestStepFailureReason::NoFailure,
+                                        failure_message: None,
+                                        request_data: Some(self.request_data.clone()),
+                                        response_data: Some(actual_response),
+                                        output_data: None,
+                                    });
                                 }
                                 Err(e) => {
                                     let failure_message =
@@ -495,8 +503,13 @@ impl RunnableTestStep for TestStep {
                 return Err(anyhow!("Error Sending Request: {}", e));
             }
         }
-
-        return Err(anyhow!("Temporary Error"));
+        return Ok(TestStepResult {
+            status: TestStepFailureReason::NoFailure,
+            failure_message: None,
+            request_data: Some(self.request_data.clone()),
+            response_data: None,
+            output_data: None,
+        });
     }
 
     fn get_status(&self) -> TestStepStatus {
