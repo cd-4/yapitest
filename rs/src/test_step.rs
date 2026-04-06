@@ -81,6 +81,24 @@ pub struct TestStepResult {
     pub failure_message: Option<String>,
 }
 
+pub fn clean_data(
+    value: &Value,
+    config: &ConfigData,
+    prior_steps: &HashMap<String, TestStepResult>,
+) -> Result<Value> {
+    for (key, val) in value.iter() {
+        if let Some(v) = val.as_object() {}
+    }
+}
+
+pub fn compare_data(
+    observed: &Value,
+    expected: &Value,
+    config: &ConfigData,
+    prior_steps: &HashMap<String, TestStepResult>,
+) -> Result<()> {
+}
+
 impl TestStepResult {
     pub fn make_failure(reason: TestStepFailureReason, message: String) -> TestStepResult {
         TestStepResult {
