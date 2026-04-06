@@ -8,7 +8,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
 use crate::config::{ConfigData, ConfigSpec, TestStepGroupReference};
-use crate::test_step::{RunnableTestStep, TestStep, TestStepResult, TestStepSpec, TestStepStatus};
+use crate::test_step::{
+    RunnableTestStep, TestStep, TestStepFailureReason, TestStepResult, TestStepSpec, TestStepStatus,
+};
 
 pub struct Test {
     pub name: String,
@@ -180,7 +182,14 @@ impl Test {
             println!("Running Step");
             match real_step.run(&self.config, &prior_steps).await {
                 Ok(result) => {
-                    println!("Success");
+                    if result.status != TestStepFailureReason::NoFailure {
+                        if let Some(emsg) = result.failure_message {
+                            println!("Error");
+                            println!("{}", emsg);
+                        }
+                    } else {
+                        println!("Success");
+                    }
                 }
                 Err(e) => {
                     println!("ERROR");

@@ -77,8 +77,8 @@ pub struct TestStepResult {
     response_data: Option<Value>,
     request_data: Option<Value>,
     output_data: Option<Value>,
-    status: TestStepFailureReason,
-    failure_message: Option<String>,
+    pub status: TestStepFailureReason,
+    pub failure_message: Option<String>,
 }
 
 impl TestStepResult {

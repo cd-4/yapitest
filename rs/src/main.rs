@@ -253,7 +253,8 @@ async fn run_tests(tests: &mut Vec<Test>) {
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let args = Args::parse();
 
     let mut test_paths: Vec<PathBuf> = Vec::new();
