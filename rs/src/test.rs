@@ -193,7 +193,7 @@ impl Test {
                 }
                 Err(e) => {
                     println!("ERROR");
-                    //eprintln!("{}", e);
+                    eprintln!("{}", e);
                 }
             }
             //step.run();

@@ -392,7 +392,7 @@ impl RunnableTestStep for TestStep {
 
         let mut url: String = "".to_string();
 
-        match self.get_url(&config) {
+        match self.get_url(config) {
             Ok(actual_url) => {
                 url = actual_url;
             }
@@ -426,6 +426,8 @@ impl RunnableTestStep for TestStep {
 
         let full_url = format!("{}{}", url, path);
 
+        println!("{}", full_url);
+        println!("{}", self.request_data.to_string());
         match client
             .request(self.method.clone(), full_url)
             .json(&self.request_data)
@@ -439,8 +441,7 @@ impl RunnableTestStep for TestStep {
                     if !TestStep::check_status_code(exp_status_code.clone(), actual_status_code) {
                         let failure_message = format!(
                             "Status Code incorrect. (Actual:{}, Expected:{})",
-                            exp_status_code.to_string(),
-                            actual_status_code.to_string()
+                            exp_status_code, actual_status_code,
                         );
                         return Ok(TestStepResult::make_failure(
                             TestStepFailureReason::StatusCodeError,
