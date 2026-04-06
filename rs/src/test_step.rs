@@ -225,7 +225,7 @@ pub fn clean_data(
     }
 */
 
-pub fn compare_data_inner(observed: &Value, expected: &Value) -> Result<()> {
+pub fn compare_data_inner(observed: &Value, expected: &Value, full: bool) -> Result<()> {
     Ok(())
 }
 
@@ -234,9 +234,10 @@ pub fn compare_data(
     expected: &Value,
     config: &ConfigData,
     prior_steps: &HashMap<String, TestStepResult>,
+    full: bool,
 ) -> Result<()> {
     match clean_data(expected, config, prior_steps) {
-        Ok(exp) => compare_data_inner(observed, &exp),
+        Ok(exp) => compare_data_inner(observed, &exp, full),
         Err(e) => Err(anyhow!("Error cleaning expected data {}", e)),
     }
 }
