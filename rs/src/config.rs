@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -294,10 +295,11 @@ impl RunnableTestStep for TestStepGroupReference {
     }
 
     async fn run(
-        &mut self,
-        config: Option<Arc<RwLock<ConfigData>>>,
+        &self,
+        config: &Option<Arc<RwLock<ConfigData>>>,
         prior_steps: &HashMap<String, TestStepResult>,
     ) -> Result<TestStepResult> {
+        Err(anyhow!("SDF"))
     }
 
     fn get_status(&self) -> TestStepStatus {
@@ -312,10 +314,24 @@ impl RunnableTestStep for TestStepGroup {
     }
 
     async fn run(
-        &mut self,
-        config: Option<Arc<RwLock<ConfigData>>>,
+        &self,
+        config: &Option<Arc<RwLock<ConfigData>>>,
         prior_steps: &HashMap<String, TestStepResult>,
     ) -> Result<TestStepResult> {
+        let mut local_steps: HashMap<String, TestStepResult> = HashMap::new();
+        for step in self.steps.iter() {
+            match Pin::into_inner(step.run(config, prior_steps)) {
+                Ok(result) => {
+                    if let Some(id) = step.get_id() {
+                        local_steps.insert(id, result);
+                    }
+                }
+                Err(e) => {
+                    return Err(anyhow!(e));
+                }
+            }
+        }
+        Err(anyhow!("Error"))
     }
 
     fn get_status(&self) -> TestStepStatus {

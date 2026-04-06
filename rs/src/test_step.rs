@@ -105,6 +105,37 @@ impl TestStepResult {
             failure_message: None,
         }
     }
+
+    pub fn get_field(&self, keys: String) -> Result<Option<Value>> {
+        let sections: Vec<&str> = keys.split(".").collect();
+
+        let mut first = true;
+
+        let mut return_value: Option<Value> = None;
+        for section in sections.iter() {
+            if first {
+                if *section == "response" {
+                    return_value = self.response_data.clone();
+                } else if *section == "request" {
+                    return_value = self.request_data.clone();
+                } else if *section == "output" {
+                    return_value = self.output_data.clone();
+                } else {
+                    return Err(anyhow!("Section {} not found in step", section));
+                }
+                first = false;
+            } else {
+                if let Some(new_val) = return_value.clone() {
+                    if let Some(obj_val) = new_val.as_object() {
+                        if let Some(new) = obj_val.get(*section) {
+                            return_value = Some(new.clone());
+                        }
+                    }
+                }
+            }
+        }
+        Ok(return_value.clone())
+    }
 }
 
 impl TestStep {
@@ -112,9 +143,14 @@ impl TestStep {
         &mut self,
         config: &Option<Arc<RwLock<ConfigData>>>,
         expected_res: &Value,
+        prior_steps: &HashMap<String, TestStepResult>,
     ) -> Result<Value> {
         if let Some(cfg) = config {
-            return self.get_expected_response_inner(&cfg.read().unwrap(), expected_res);
+            return self.get_expected_response_inner(
+                &cfg.read().unwrap(),
+                expected_res,
+                prior_steps,
+            );
         } else {
             return Ok(expected_res.clone());
         }
@@ -124,8 +160,9 @@ impl TestStep {
         &mut self,
         config: &ConfigData,
         expected_res: &Value,
+        prior_steps: &HashMap<String, TestStepResult>,
     ) -> Result<Value> {
-        match self.clean_expected_response(config, expected_res) {
+        match self.clean_expected_response(config, expected_res, prior_steps) {
             Ok(response) => {
                 return Ok(response);
             }
@@ -139,6 +176,7 @@ impl TestStep {
         &self,
         config: &ConfigData,
         expected_response: &Value,
+        prior_steps: &HashMap<String, TestStepResult>,
     ) -> Result<Value> {
         let mut clone_res = expected_response.clone();
         if let Some(ref mut map) = clone_res.as_object_mut() {
@@ -146,7 +184,7 @@ impl TestStep {
 
             for k in keys.iter() {
                 if let Some(value) = map.get_mut(k) {
-                    match self.clean_expected_response(&config, value) {
+                    match self.clean_expected_response(&config, value, prior_steps) {
                         Ok(new_value) => {
                             map.insert(k.clone(), new_value);
                         }
@@ -162,7 +200,7 @@ impl TestStep {
             let mut cleaned_vec: Vec<Value> = Vec::with_capacity(vec.len());
 
             for item in vec.iter_mut() {
-                let cleaned_item = self.clean_expected_response(config, item)?;
+                let cleaned_item = self.clean_expected_response(config, item, prior_steps)?;
                 cleaned_vec.push(cleaned_item);
             }
 
@@ -172,8 +210,20 @@ impl TestStep {
                 let mut config_key = str.to_string();
                 config_key.remove(0); // remove leading $
 
-                let new_value = config.get_string_value(config_key)?;
-                return Ok(Value::String(new_value));
+                if let Ok(new_value) = config.get_string_value(config_key.clone()) {
+                    return Ok(Value::String(new_value));
+                }
+
+                for (_step_id, step) in prior_steps.iter() {
+                    if let Ok(result) = step.get_field(config_key.clone()) {
+                        if let Some(res) = result {
+                            return Ok(res.clone());
+                        } else {
+                            continue;
+                        }
+                    }
+                }
+                return Err(anyhow!("Key {} not found", str));
             } else {
                 return Ok(expected_response.clone());
             }
@@ -199,25 +249,38 @@ impl TestStep {
         return false;
     }
 
-    fn check_response_obj(expected_obj: Value, actual_obj: Value, full: bool) -> Result<()> {}
-
-    fn check_response(expected: &Value, actual: &Value, full: bool) -> Result<()> {
-        if let (Some(expected_obj), Some(actual_obj)) = (expected.as_object(), actual.as_object()) {
-        }
-
+    fn check_response(
+        &mut self,
+        config: &Option<Arc<RwLock<ConfigData>>>,
+        expected: &Value,
+        actual: &Value,
+        prior_steps: &HashMap<String, TestStepResult>,
+        full: bool,
+    ) -> Result<()> {
         let mut compare_mode = serde_json_assert::CompareMode::Inclusive;
         if full {
             compare_mode = serde_json_assert::CompareMode::Strict;
         }
 
-        let config = serde_json_assert::Config::new(compare_mode).consider_array_sorting(false);
-        match serde_json_assert::assert_json_matches_no_panic(actual, expected, &config) {
-            Ok(()) => {}
+        let assert_config =
+            serde_json_assert::Config::new(compare_mode).consider_array_sorting(false);
+
+        match self.get_expected_response(config, expected, prior_steps) {
+            Ok(exp) => {
+                match serde_json_assert::assert_json_matches_no_panic(actual, &exp, &assert_config)
+                {
+                    Ok(_res) => {
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        return Err(anyhow!(e));
+                    }
+                }
+            }
             Err(e) => {
                 return Err(anyhow!(e));
             }
         }
-        Ok(())
     }
 
     fn get_identifier(&self, num_prior_steps: usize) -> String {
@@ -307,8 +370,8 @@ impl TestStep {
 pub trait RunnableTestStep {
     fn get_id(&self) -> Option<&String>;
     async fn run(
-        &mut self,
-        config: Option<Arc<RwLock<ConfigData>>>,
+        &self,
+        config: &Option<Arc<RwLock<ConfigData>>>,
         prior_steps: &HashMap<String, TestStepResult>,
     ) -> Result<TestStepResult>;
     fn get_status(&self) -> TestStepStatus;
@@ -321,8 +384,8 @@ impl RunnableTestStep for TestStep {
     }
 
     async fn run(
-        &mut self,
-        config: Option<Arc<RwLock<ConfigData>>>,
+        &self,
+        config: &Option<Arc<RwLock<ConfigData>>>,
         prior_steps: &HashMap<String, TestStepResult>,
     ) -> Result<TestStepResult> {
         let client = Client::new();
@@ -389,11 +452,19 @@ impl RunnableTestStep for TestStep {
                 if let Some(expected_response) = self.expected_response_data.clone() {
                     match response.json::<Value>().await {
                         Ok(actual_response) => {
-                            match self.get_expected_response(&config, &expected_response) {
+                            match self.get_expected_response(
+                                &config,
+                                &expected_response,
+                                prior_steps,
+                            ) {
                                 Ok(expected) => {
-                                    if let Err(e) =
-                                        TestStep::check_response(&expected, &actual_response, true)
-                                    {
+                                    if let Err(e) = self.check_response(
+                                        &config,
+                                        &expected,
+                                        &actual_response,
+                                        prior_steps,
+                                        true,
+                                    ) {
                                         let failure_message = format!("Response Incorrect: {}", e);
                                         return Ok(TestStepResult::make_failure(
                                             TestStepFailureReason::ResponseError,
