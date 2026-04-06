@@ -318,6 +318,15 @@ pub fn compare_primitive_values(observed: &Value, expected: &Value, keys: String
         ));
     }
 
+    if observed != expected {
+        return Err(anyhow!(
+            "For key: {} Expected: {} | Value Found {}",
+            keys,
+            expected,
+            observed
+        ));
+    }
+
     Err(anyhow!("Expected: {} | Value Found {}", expected, observed))
 }
 
