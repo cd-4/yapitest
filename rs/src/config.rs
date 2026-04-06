@@ -55,7 +55,7 @@ impl TestStepGroup {
             once = true;
         }
 
-        let mut steps: Vec<Arc<dyn RunnableTestStep>> = vec![];
+        let mut steps: Vec<Arc<dyn RunnableTestStep + Send + Sync>> = vec![];
         for step in spec.steps.iter() {
             if let Some(step_name) = step.as_str() {
                 panic!("Need to implement step names {}", step_name);
