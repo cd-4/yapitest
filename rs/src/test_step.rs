@@ -243,7 +243,8 @@ pub fn compare_data_objects(
         let exp_value = expected_object.get(key);
 
         if exp_value.is_none() {
-            if let Some(length_value) = expected_object.get(format!("len({})", key.to_string())) {}
+            let size_str: String = format!("len({})", key);
+            if let Some(expected_size) = expected_object.get(&size_str) {}
 
             if full {
                 return Err(anyhow!(
