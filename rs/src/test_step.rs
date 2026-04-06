@@ -81,14 +81,152 @@ pub struct TestStepResult {
     pub failure_message: Option<String>,
 }
 
+pub fn get_variable(
+    name: String,
+    config: &ConfigData,
+    prior_steps: &HashMap<String, TestStepResult>,
+) -> Result<Value> {
+    if !name.starts_with('$') {
+        return Ok(Value::String(name));
+    }
+    let mut current_key = name.clone();
+    'outer: while current_key.starts_with('$') {
+        let mut value_key = current_key.clone();
+        value_key.remove(0);
+        if let Ok(new_val) = config.get_string_value(value_key.clone()) {
+            current_key = new_val;
+        } else {
+            for (step_id, step) in prior_steps.iter() {
+                let mut new_key: String = step_id.clone();
+                new_key.push('.');
+                if new_key.starts_with(&new_key.clone()) {
+                    let trimmed_str = value_key.strip_prefix(&new_key).unwrap();
+                    match step.get_field(trimmed_str.to_string()) {
+                        Ok(value) => {
+                            if let Some(v) = value {
+                                if let Some(string_val) = v.as_str() {
+                                    if string_val.starts_with('$') {
+                                        continue 'outer;
+                                    }
+                                }
+                                return Ok(v);
+                            } else {
+                                return Err(anyhow!("Value not found: {}", name));
+                            }
+                        }
+                        Err(e) => {
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return Err(anyhow!("Value not found: {}", name));
+}
+
 pub fn clean_data(
     value: &Value,
     config: &ConfigData,
     prior_steps: &HashMap<String, TestStepResult>,
 ) -> Result<Value> {
-    for (key, val) in value.iter() {
-        if let Some(v) = val.as_object() {}
+    if let Some(map) = value.clone().as_object_mut() {
+        for (key, val) in map.clone().iter_mut() {
+            match clean_data(val, config, prior_steps) {
+                Ok(cleaned) => {
+                    map.insert(key.clone(), cleaned);
+                }
+                Err(e) => {
+                    return Err(e);
+                }
+            }
+        }
+        return Ok(Value::from(map.clone()));
+    } else if let Some(vec) = value.clone().as_array_mut() {
+        let mut cleaned_vec: Vec<Value> = Vec::with_capacity(vec.len());
+
+        for item in vec.iter_mut() {
+            match clean_data(item, config, prior_steps) {
+                Ok(cleaned) => {
+                    cleaned_vec.push(cleaned);
+                }
+                Err(e) => {
+                    return Err(e);
+                }
+            }
+        }
+        return Ok(Value::Array(cleaned_vec));
+    } else if let Some(str) = value.as_str() {
+        return get_variable(str.to_string(), config, prior_steps);
     }
+
+    return Ok(value.clone());
+}
+
+/*
+    fn clean_expected_response(
+        &self,
+        config: &ConfigData,
+        expected_response: &Value,
+        prior_steps: &HashMap<String, TestStepResult>,
+    ) -> Result<Value> {
+        let mut clone_res = expected_response.clone();
+        if let Some(ref mut map) = clone_res.as_object_mut() {
+            let keys: Vec<String> = map.iter().filter_map(|(k, _)| Some(k.clone())).collect();
+
+            for k in keys.iter() {
+                if let Some(value) = map.get_mut(k) {
+                    match self.clean_expected_response(&config, value, prior_steps) {
+                        Ok(new_value) => {
+                            map.insert(k.clone(), new_value);
+                        }
+                        Err(e) => {
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+            return Ok(Value::Object(map.clone()));
+        } else if let Some(ref mut vec) = clone_res.as_array_mut() {
+            // Build a completely new vector from the cleaned items
+            let mut cleaned_vec: Vec<Value> = Vec::with_capacity(vec.len());
+
+            for item in vec.iter_mut() {
+                let cleaned_item = self.clean_expected_response(config, item, prior_steps)?;
+                cleaned_vec.push(cleaned_item);
+            }
+
+            return Ok(Value::Array(cleaned_vec));
+        } else if let Some(str) = expected_response.as_str() {
+            if str.starts_with('$') {
+                let mut config_key = str.to_string();
+                config_key.remove(0); // remove leading $
+
+                if let Ok(new_value) = config.get_string_value(config_key.clone()) {
+                    return Ok(Value::String(new_value));
+                }
+
+                for (_step_id, step) in prior_steps.iter() {
+                    if let Ok(result) = step.get_field(config_key.clone()) {
+                        if let Some(res) = result {
+                            return Ok(res.clone());
+                        } else {
+                            continue;
+                        }
+                    }
+                }
+                return Err(anyhow!("Key {} not found", str));
+            } else {
+                return Ok(expected_response.clone());
+            }
+        } else {
+            return Ok(expected_response.clone());
+        }
+    }
+*/
+
+pub fn compare_data_inner(observed: &Value, expected: &Value) -> Result<()> {
+    Ok(())
 }
 
 pub fn compare_data(
@@ -97,6 +235,10 @@ pub fn compare_data(
     config: &ConfigData,
     prior_steps: &HashMap<String, TestStepResult>,
 ) -> Result<()> {
+    match clean_data(expected, config, prior_steps) {
+        Ok(exp) => compare_data_inner(observed, &exp),
+        Err(e) => Err(anyhow!("Error cleaning expected data {}", e)),
+    }
 }
 
 impl TestStepResult {
