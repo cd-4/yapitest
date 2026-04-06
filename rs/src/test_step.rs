@@ -140,7 +140,7 @@ impl TestStepResult {
 
 impl TestStep {
     fn get_expected_response(
-        &mut self,
+        &self,
         config: &Option<Arc<RwLock<ConfigData>>>,
         expected_res: &Value,
         prior_steps: &HashMap<String, TestStepResult>,
@@ -157,7 +157,7 @@ impl TestStep {
     }
 
     fn get_expected_response_inner(
-        &mut self,
+        &self,
         config: &ConfigData,
         expected_res: &Value,
         prior_steps: &HashMap<String, TestStepResult>,
@@ -250,7 +250,7 @@ impl TestStep {
     }
 
     fn check_response(
-        &mut self,
+        &self,
         config: &Option<Arc<RwLock<ConfigData>>>,
         expected: &Value,
         actual: &Value,

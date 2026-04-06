@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
-use std::pin::{Pin, pin, unpin};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -320,7 +319,7 @@ impl RunnableTestStep for TestStepGroup {
     ) -> Result<TestStepResult> {
         let mut local_steps: HashMap<String, TestStepResult> = HashMap::new();
         for step in self.steps.iter() {
-            match unpin!(step.run(config, prior_steps)) {
+            match step.run(config, prior_steps).await {
                 Ok(result) => {
                     if let Some(id) = step.get_id() {
                         local_steps.insert(id.clone(), result);
