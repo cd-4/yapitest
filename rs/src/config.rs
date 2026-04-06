@@ -101,12 +101,22 @@ impl ConfigData {
     pub fn get_string_value(&self, key: String) -> Result<String> {
         let string_keys: Vec<String> = key.split('.').map(|v| v.to_string()).collect();
         if string_keys[0] == "urls" {
-            if let Some(url) = self.urls.get(&string_keys[1]) {
-                return Ok(url.clone());
+            if let Some(val) = self.urls.get(&string_keys[1]) {
+                if val.starts_with('$') {
+                    let mut new_val = val.clone();
+                    new_val.remove(0);
+                    return self.get_string_value(new_val);
+                }
+                return Ok(val.clone());
             }
         }
         if string_keys[0] == "vars" {
             if let Some(var) = self.vars.get(&string_keys[1]) {
+                if var.starts_with('$') {
+                    let mut new_val = var.clone();
+                    new_val.remove(0);
+                    return self.get_string_value(new_val);
+                }
                 return Ok(var.clone());
             }
         }
