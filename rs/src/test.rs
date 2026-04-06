@@ -1,13 +1,14 @@
 use anyhow::{Error, Result, anyhow};
 use serde::Deserialize;
 use serde_yaml::{Value, from_value};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
 use crate::config::{ConfigData, ConfigSpec, TestStepGroupReference};
-use crate::test_step::{RunnableTestStep, TestStep, TestStepSpec, TestStepStatus};
+use crate::test_step::{RunnableTestStep, TestStep, TestStepResult, TestStepSpec, TestStepStatus};
 
 pub struct Test {
     pub name: String,
@@ -169,7 +170,15 @@ impl Test {
 
     pub fn run(&mut self) {
         println!("Running Test: {}", self.name);
+        //config: &Option<Arc<RwLock<ConfigData>>>,
+        //prior_steps: &HashMap<String, TestStepResult>,
+
+        let prior_steps: HashMap<String, TestStepResult> = HashMap::new();
+
         for step in self.steps.iter_mut() {
+            let real_step = step.read().unwrap();
+            println!("Running Step");
+            let result = real_step.run(&self.config, &prior_steps);
             //step.run();
         }
     }
