@@ -243,6 +243,8 @@ pub fn compare_data_objects(
         let exp_value = expected_object.get(key);
 
         if exp_value.is_none() {
+            if let Some(length_value) = expected_object.get(format!("len({})", key.to_string())) {}
+
             if full {
                 return Err(anyhow!(
                     "'full' set and value '{}.{}' was not found",
