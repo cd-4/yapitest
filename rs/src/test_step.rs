@@ -3,11 +3,14 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use reqwest::{Client, Method};
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Map, Value};
+use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
+
+use std::mem::discriminant;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum TestStepFailureReason {
@@ -225,7 +228,79 @@ pub fn clean_data(
     }
 */
 
-pub fn compare_data_inner(observed: &Value, expected: &Value, full: bool) -> Result<()> {
+pub fn compare_data_objects(
+    observed_object: &Map<String, Value>,
+    expected_object: &Map<String, Value>,
+    full: bool,
+    keys: String,
+) -> Result<()> {
+    for key in observed_object.keys() {
+        let observed = observed_object.get(key).unwrap();
+        let exp_value = expected_object.get(key);
+
+        if exp_value.is_none() {
+            if full {
+                return Err(anyhow!("'full' set and value was not found"));
+            }
+            continue;
+        }
+
+        let expected = exp_value.unwrap();
+
+        if let Err(e) = compare_data_inner(observed, expected, full, format!("{}{}", keys, key)) {
+            return Err(e);
+        }
+    }
+
+    Ok(())
+}
+
+pub fn compare_array_objects(
+    observed_object: &Vec<Value>,
+    expected_object: &Vec<Value>,
+    full: bool,
+    keys: String,
+) -> Result<()> {
+}
+
+pub fn compare_primitive_values(observed: &Value, expected: &Value, keys: String) -> Result<()> {
+    if let Some(exp_str) = expected.as_str() {
+        if exp_str.starts_with('+') {
+            let mut exp_type = exp_str.clone().to_string();
+            exp_type.remove(0);
+
+            if exp_type == "str" || exp_type == "string" {
+            } else if exp_type == "float" || exp_type == "flt" {
+            } else if exp_type == "int" {
+            }
+        }
+    }
+
+    if discriminant(expected) != discriminant(observed) {
+        return Err(anyhow!(
+            "Expected type {:?} | Found type {:?}",
+            expected.type_id(),
+            observed.type_id()
+        ));
+    }
+
+    Err(anyhow!("Expected: {} | Value Found {}", expected, observed))
+}
+
+pub fn compare_data_inner(
+    observed: &Value,
+    expected: &Value,
+    full: bool,
+    keys: String,
+) -> Result<()> {
+    if let (Some(obs_obj), Some(exp_obj)) = (observed.as_object(), expected.as_object()) {
+        return compare_data_objects(obs_obj, exp_obj, full, keys);
+    } else if let (Some(obs_arr), Some(exp_arr)) = (observed.as_array(), expected.as_array()) {
+        return compare_array_objects(obs_arr, exp_arr, full, keys);
+    } else {
+        return compare_primitive_values(obs_obj, exp_obj, keys);
+    }
+
     Ok(())
 }
 
@@ -237,7 +312,7 @@ pub fn compare_data(
     full: bool,
 ) -> Result<()> {
     match clean_data(expected, config, prior_steps) {
-        Ok(exp) => compare_data_inner(observed, &exp, full),
+        Ok(exp) => compare_data_inner(observed, &exp, full, "".to_string()),
         Err(e) => Err(anyhow!("Error cleaning expected data {}", e)),
     }
 }
