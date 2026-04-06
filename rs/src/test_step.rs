@@ -240,14 +240,18 @@ pub fn compare_data_objects(
 
         if exp_value.is_none() {
             if full {
-                return Err(anyhow!("'full' set and value was not found"));
+                return Err(anyhow!(
+                    "'full' set and value '{}.{}' was not found",
+                    keys,
+                    key
+                ));
             }
             continue;
         }
 
         let expected = exp_value.unwrap();
 
-        if let Err(e) = compare_data_inner(observed, expected, full, format!("{}{}", keys, key)) {
+        if let Err(e) = compare_data_inner(observed, expected, full, format!("{}.{}", keys, key)) {
             return Err(e);
         }
     }
@@ -261,6 +265,27 @@ pub fn compare_array_objects(
     full: bool,
     keys: String,
 ) -> Result<()> {
+    let num_expected = expected_object.len();
+    let num_observed = observed_object.len();
+    if num_expected != num_observed {
+        return Err(anyhow!(
+            "Expected {} items in {}. Found {}",
+            num_expected,
+            keys,
+            num_observed
+        ));
+    }
+
+    let mut index = 0;
+    for (observed, expected) in observed_object.iter().zip(expected_object.iter()) {
+        let new_keys = format!("{}.[{}]", keys, index);
+        if let Err(e) = compare_data_inner(observed, expected, full, new_keys) {
+            return Err(e);
+        }
+        index += 1;
+    }
+
+    Ok(())
 }
 
 pub fn compare_primitive_values(observed: &Value, expected: &Value, keys: String) -> Result<()> {
@@ -268,10 +293,12 @@ pub fn compare_primitive_values(observed: &Value, expected: &Value, keys: String
         if exp_str.starts_with('+') {
             let mut exp_type = exp_str.clone().to_string();
             exp_type.remove(0);
-
-            if exp_type == "str" || exp_type == "string" {
-            } else if exp_type == "float" || exp_type == "flt" {
-            } else if exp_type == "int" {
+            if (exp_type == "str" || exp_type == "string") && observed.as_str().is_none() {
+                return Err(anyhow!("Expected string for {}", keys));
+            } else if (exp_type == "float" || exp_type == "flt") && observed.as_f64().is_none() {
+                return Err(anyhow!("Expected string for {}", keys));
+            } else if exp_type == "int" && observed.as_i64().is_none() {
+                return Err(anyhow!("Expected int for {}", keys));
             }
         }
     }
@@ -294,14 +321,12 @@ pub fn compare_data_inner(
     keys: String,
 ) -> Result<()> {
     if let (Some(obs_obj), Some(exp_obj)) = (observed.as_object(), expected.as_object()) {
-        return compare_data_objects(obs_obj, exp_obj, full, keys);
+        compare_data_objects(obs_obj, exp_obj, full, keys)
     } else if let (Some(obs_arr), Some(exp_arr)) = (observed.as_array(), expected.as_array()) {
-        return compare_array_objects(obs_arr, exp_arr, full, keys);
+        compare_array_objects(obs_arr, exp_arr, full, keys)
     } else {
-        return compare_primitive_values(obs_obj, exp_obj, keys);
+        compare_primitive_values(observed, expected, keys)
     }
-
-    Ok(())
 }
 
 pub fn compare_data(
