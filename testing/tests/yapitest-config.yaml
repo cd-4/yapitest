@@ -11,5 +11,5 @@ vars:
     default: p4ssw0rd123!
 
 urls:
-  default: $vars.default-url
+  base: $vars.default-url
 

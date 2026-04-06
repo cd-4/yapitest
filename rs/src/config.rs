@@ -1,12 +1,14 @@
-use crate::test_step::{RunnableTestStep, TestStep, TestStepSpec, TestStepStatus};
+use crate::test_step::{RunnableTestStep, TestStep, TestStepResult, TestStepSpec, TestStepStatus};
+use anyhow::{Error, Result, anyhow};
+use async_trait::async_trait;
 use serde::Deserialize;
 use serde_yaml::{Value, from_value};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, Error};
+use std::io::BufReader;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -18,10 +20,30 @@ pub struct TestStepGroupSpec {
 
 pub struct TestStepGroup {
     id: Option<String>,
-    steps: Vec<Rc<dyn RunnableTestStep>>,
+    steps: Vec<Arc<dyn RunnableTestStep + Send + Sync>>,
     status: TestStepStatus,
     run_once: bool,
     has_run: bool,
+}
+
+pub struct TestStepGroupReference {
+    id: String,
+    status: TestStepStatus,
+}
+
+pub fn get_depth(key_vec: Vec<String>, value: Value) -> Result<Value> {
+    let mut cur_val = &value;
+    for key in key_vec.iter() {
+        match cur_val.get(key) {
+            Some(val) => {
+                cur_val = val;
+            }
+            None => {
+                return Err(anyhow!("{} not found", key_vec.join(".")));
+            }
+        }
+    }
+    Ok(cur_val.clone())
 }
 
 impl TestStepGroup {
@@ -33,13 +55,13 @@ impl TestStepGroup {
             once = true;
         }
 
-        let mut steps: Vec<Rc<dyn RunnableTestStep>> = vec![];
+        let mut steps: Vec<Arc<dyn RunnableTestStep + Send + Sync>> = vec![];
         for step in spec.steps.iter() {
             if let Some(step_name) = step.as_str() {
                 panic!("Need to implement step names {}", step_name);
             } else if let Ok(test_step_spec) = from_value::<TestStepSpec>(step.clone()) {
                 let test_step = TestStep::from_spec(test_step_spec);
-                let test_step_rc: Rc<TestStep> = Rc::new(test_step);
+                let test_step_rc: Arc<TestStep> = Arc::new(test_step);
                 steps.push(test_step_rc);
             }
         }
@@ -69,15 +91,43 @@ pub struct ConfigSpec {
 
 pub struct ConfigData {
     pub path: PathBuf,
-    pub parent: Option<Arc<Mutex<ConfigData>>>,
+    pub parent: Option<Arc<RwLock<ConfigData>>>,
     step_sets: Option<HashMap<String, TestStepGroup>>,
     vars: HashMap<String, String>,
     urls: HashMap<String, String>,
 }
 
 impl ConfigData {
-    pub fn set_parent(&mut self, parent: Option<Arc<Mutex<ConfigData>>>) {
-        self.parent = parent;
+    pub fn get_string_value(&self, key: String) -> Result<String> {
+        let string_keys: Vec<String> = key.split('.').map(|v| v.to_string()).collect();
+        if string_keys[0] == "urls" {
+            if let Some(val) = self.urls.get(&string_keys[1]) {
+                if val.starts_with('$') {
+                    let mut new_val = val.clone();
+                    new_val.remove(0);
+                    return self.get_string_value(new_val);
+                }
+                return Ok(val.clone());
+            }
+        }
+        if string_keys[0] == "vars" {
+            if let Some(var) = self.vars.get(&string_keys[1]) {
+                if var.starts_with('$') {
+                    let mut new_val = var.clone();
+                    new_val.remove(0);
+                    return self.get_string_value(new_val);
+                }
+                return Ok(var.clone());
+            }
+        }
+        if let Some(par) = &self.parent {
+            return par.read().unwrap().get_string_value(key);
+        }
+        Err(anyhow!("Url {} not found in any config", key))
+    }
+
+    pub fn set_parent(&mut self, parent: Arc<RwLock<ConfigData>>) {
+        self.parent = Some(parent);
     }
 
     fn create_variables(
@@ -111,7 +161,7 @@ impl ConfigData {
                         or a mapping with one or more of 'default' and 'env' values.",
                         key
                     );
-                    return Err(Error::other(error_message));
+                    return Err(anyhow!(error_message));
                 }
             }
         }
@@ -119,11 +169,7 @@ impl ConfigData {
         Ok(output)
     }
 
-    pub fn from_config_spec(
-        path: &PathBuf,
-        parent: Option<Arc<Mutex<ConfigData>>>,
-        spec: ConfigSpec,
-    ) -> ConfigData {
+    pub fn from_spec(path: &PathBuf, spec: ConfigSpec) -> Result<ConfigData> {
         let mut step_sets: Option<HashMap<String, TestStepGroup>> = None;
         if let Some(step_set_specs) = spec.step_sets {
             step_sets = Some(
@@ -143,7 +189,7 @@ impl ConfigData {
                     vars = vars_result;
                 }
                 Err(e) => {
-                    panic!("Error Decoding Config {}:\n{}", path.display(), e);
+                    return Err(anyhow!("Error Decoding Config {}:\n{}", path.display(), e));
                 }
             }
         }
@@ -154,17 +200,24 @@ impl ConfigData {
                     urls = urls_result;
                 }
                 Err(e) => {
-                    panic!("Error Decoding Config {}:\n{}", path.display(), e);
+                    return Err(anyhow!("Error Decoding Config {}:\n{}", path.display(), e));
                 }
             }
         }
 
-        ConfigData {
+        Ok(ConfigData {
             path: path.clone(),
-            parent,
+            parent: None,
             step_sets,
             vars,
             urls,
+        })
+    }
+
+    pub fn spec_from_val(value: &Value) -> anyhow::Result<ConfigSpec> {
+        match from_value::<ConfigSpec>(value.clone()) {
+            Ok(config_spec) => Ok(config_spec),
+            Err(e) => Err(anyhow!("{}", e)),
         }
     }
 
@@ -178,40 +231,30 @@ impl ConfigData {
         }
     }
 
-    pub fn spec_from_file(path: &PathBuf) -> Option<ConfigSpec> {
+    pub fn spec_from_file(path: &PathBuf) -> Result<ConfigSpec> {
         if let Ok(file) = File::open(path) {
             let reader = BufReader::new(file);
             let config_file_result = serde_yaml::from_reader::<_, Value>(reader);
             match config_file_result {
                 Ok(config_file) => {
-                    return ConfigData::spec_from_value(config_file);
+                    return ConfigData::spec_from_val(&config_file);
                 }
                 Err(e) => {
-                    eprintln!("Error Loading Config File: {}\n{}", path.display(), e);
+                    return Err(anyhow!(e));
                 }
             }
         } else {
-            eprintln!("Error Reading Config File: {}", path.display());
+            return Err(anyhow!("Error Reading Config File: {}", path.display()));
         }
-        None
     }
 
-    pub fn from_value(
-        parent: Option<Arc<Mutex<ConfigData>>>,
-        value: Value,
-        path: &PathBuf,
-    ) -> Option<ConfigData> {
-        if let Some(spec) = ConfigData::spec_from_value(value) {
-            return Some(ConfigData::from_config_spec(path, parent, spec));
-        }
-        None
+    pub fn from_val(value: &Value, path: &PathBuf) -> Result<ConfigData> {
+        ConfigData::spec_from_val(value).and_then(|v| ConfigData::from_spec(path, v))
     }
 
-    pub fn from_file(parent: Option<Arc<Mutex<ConfigData>>>, path: &PathBuf) -> Option<ConfigData> {
-        if let Some(spec) = ConfigData::spec_from_file(path) {
-            return Some(ConfigData::from_config_spec(path, parent, spec));
-        }
-        None
+    pub fn from_file(path: &PathBuf) -> Result<ConfigData> {
+        let spec = ConfigData::spec_from_file(path)?;
+        ConfigData::from_spec(path, spec)
     }
 
     /*
@@ -245,26 +288,59 @@ impl ConfigData {
     */
 }
 
+impl TestStepGroupReference {
+    pub fn from_id(id: String) -> TestStepGroupReference {
+        TestStepGroupReference {
+            id,
+            status: TestStepStatus::NotRun,
+        }
+    }
+}
+
+#[async_trait]
+impl RunnableTestStep for TestStepGroupReference {
+    fn get_id(&self) -> Option<&String> {
+        Some(&self.id)
+    }
+
+    async fn run(
+        &self,
+        config: &Option<Arc<RwLock<ConfigData>>>,
+        prior_steps: &HashMap<String, TestStepResult>,
+    ) -> Result<TestStepResult> {
+        Err(anyhow!("SDF"))
+    }
+
+    fn get_status(&self) -> TestStepStatus {
+        self.status
+    }
+}
+
+#[async_trait]
 impl RunnableTestStep for TestStepGroup {
     fn get_id(&self) -> Option<&String> {
         self.id.as_ref()
     }
 
-    fn run(&mut self) {
-        /*
-        if self.has_run && self.run_once {
-            return;
-        }
-        self.status = TestStepStatus::InProgress;
-        for step in self.steps.iter_mut() {
-            step.run();
-            if step.get_status() == TestStepStatus::Fail {
-                self.status = TestStepStatus::Fail;
-                return;
+    async fn run(
+        &self,
+        config: &Option<Arc<RwLock<ConfigData>>>,
+        prior_steps: &HashMap<String, TestStepResult>,
+    ) -> Result<TestStepResult> {
+        let mut local_steps: HashMap<String, TestStepResult> = HashMap::new();
+        for step in self.steps.iter() {
+            match step.run(config, prior_steps).await {
+                Ok(result) => {
+                    if let Some(id) = step.get_id() {
+                        local_steps.insert(id.clone(), result);
+                    }
+                }
+                Err(e) => {
+                    return Err(e);
+                }
             }
         }
-        self.status = TestStepStatus::Pass;
-        */
+        Err(anyhow!("Error"))
     }
 
     fn get_status(&self) -> TestStepStatus {

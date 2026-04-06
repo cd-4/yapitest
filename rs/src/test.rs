@@ -1,20 +1,25 @@
+use anyhow::{Error, Result, anyhow};
 use serde::Deserialize;
 use serde_yaml::{Value, from_value};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex, RwLock};
 
-use crate::config::{ConfigData, ConfigSpec};
-use crate::test_step::{TestStep, TestStepSpec};
+use crate::config::{ConfigData, ConfigSpec, TestStepGroupReference};
+use crate::test_step::{
+    RunnableTestStep, TestStep, TestStepFailureReason, TestStepResult, TestStepSpec, TestStepStatus,
+};
 
 pub struct Test {
-    name: String,
+    pub name: String,
     path: PathBuf,
-    config: Option<ConfigData>,
-    groups: Option<Vec<String>>,
+    pub config: Option<Arc<RwLock<ConfigData>>>,
+    pub groups: Option<Vec<String>>,
     setup: Option<String>,
     teardown: Option<String>,
-    steps: Vec<TestStep>,
+    steps: Vec<Arc<RwLock<dyn RunnableTestStep>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -22,7 +27,7 @@ pub struct Test {
 pub struct TestSpec {
     setup: Option<String>,
     teardown: Option<String>,
-    steps: Vec<TestStepSpec>,
+    steps: Vec<Value>,
     config: Option<ConfigSpec>,
     groups: Option<Vec<String>>,
 }
@@ -33,23 +38,90 @@ fn is_test_name(key: String) -> bool {
 }
 
 impl Test {
-    pub fn from_spec(path: PathBuf, name: String, spec: TestSpec) -> Test {
-        let mut config: Option<ConfigData> = None;
-        if let Some(config_spec) = spec.config {
-            config = Some(ConfigData::from_config_spec(&path, None, config_spec));
+    pub fn add_config(&mut self, config: Arc<RwLock<ConfigData>>) {
+        match &self.config {
+            Some(cfg) => {
+                let o_new_config_dir = config.read().unwrap().path.clone();
+                let o_current_config_dir = cfg.read().unwrap().path.clone();
+
+                if let (Some(new_dir), Some(current_dir)) =
+                    (o_new_config_dir.parent(), o_current_config_dir.parent())
+                {
+                    if current_dir.starts_with(new_dir) {
+                        cfg.write().unwrap().set_parent(config);
+                    } else if new_dir.starts_with(current_dir) {
+                        config.write().unwrap().set_parent(Arc::clone(cfg));
+                    } else {
+                        panic!(
+                            "ERROR: Cannot set parentage with unrelated configs {} {}",
+                            new_dir.display(),
+                            current_dir.display()
+                        );
+                    }
+                }
+            }
+            None => {
+                self.config = Some(Arc::clone(&config));
+            }
         }
-        Test {
+    }
+
+    pub fn has_config(&self) -> bool {
+        self.config.is_some()
+    }
+
+    pub fn set_config(&mut self, config: Arc<RwLock<ConfigData>>) {
+        match &self.config {
+            Some(cfg) => {
+                cfg.write().unwrap().set_parent(Arc::clone(&config));
+            }
+            None => {
+                self.config = Some(Arc::clone(&config));
+            }
+        }
+        self.config = Some(config);
+    }
+
+    pub fn from_spec(path: PathBuf, name: String, spec: TestSpec) -> Result<Test> {
+        let mut config: Option<Arc<RwLock<ConfigData>>> = None;
+        if let Some(config_spec) = spec.config {
+            let loaded_config = ConfigData::from_spec(&path, config_spec)?;
+            config = Some(Arc::new(RwLock::new(loaded_config)));
+        }
+
+        let mut test_steps: Vec<Arc<RwLock<dyn RunnableTestStep>>> = vec![];
+
+        for step in spec.steps.into_iter() {
+            match from_value::<TestStepSpec>(step.clone()) {
+                Ok(test_step_spec) => {
+                    let step = TestStep::from_spec(test_step_spec);
+                    test_steps.push(Arc::new(RwLock::new(step)));
+                }
+                Err(e) => {
+                    // Possible that it's using a test step defined in the config
+                    match step.clone().as_str() {
+                        Some(step_name) => {
+                            let step = TestStepGroupReference::from_id(step_name.to_string());
+                            test_steps.push(Arc::new(RwLock::new(step)));
+                        }
+                        None => return Err(anyhow!("Error Decoding Step in test {}", name)),
+                    }
+                }
+            }
+        }
+
+        Ok(Test {
             name,
             path,
             setup: spec.setup,
             teardown: spec.teardown,
-            steps: spec.steps.into_iter().map(TestStep::from_spec).collect(),
+            steps: test_steps,
             config,
             groups: spec.groups,
-        }
+        })
     }
 
-    pub fn load_test_file(path: &PathBuf) -> (Option<ConfigData>, Vec<Test>) {
+    pub fn load_from_file(path: &PathBuf) -> Result<(Option<ConfigData>, Vec<Test>), Error> {
         let mut config: Option<ConfigData> = None;
         let mut tests: Vec<Test> = vec![];
 
@@ -57,25 +129,24 @@ impl Test {
             let reader = BufReader::new(file);
             let test_file_result = serde_yaml::from_reader::<_, Value>(reader);
             match test_file_result {
-                Ok(tests_file) => {
-                    println!("Loaded Test File");
-
-                    if let Some(config_value) = tests_file.get("config") {
-                        config = ConfigData::from_value(None, config_value.clone(), path);
+                Ok(test_file) => {
+                    if let Some(config_value) = test_file.get("config") {
+                        config = Some(ConfigData::from_val(&config_value, path)?);
                     }
 
-                    if let Some(mapping) = tests_file.as_mapping() {
+                    if let Some(mapping) = test_file.as_mapping() {
                         for key in mapping.keys().filter_map(|v| v.as_str()) {
                             if is_test_name(key.to_string()) {
-                                if let Some(config_value) = mapping.get(key) {
-                                    match from_value::<TestSpec>(config_value.clone()) {
+                                if let Some(test_value) = mapping.get(key) {
+                                    match from_value::<TestSpec>(test_value.clone()) {
                                         Ok(test_spec) => {
-                                            tests.push(Test::from_spec(
+                                            let test = Test::from_spec(
                                                 path.clone(),
                                                 key.to_string(),
                                                 test_spec,
-                                            ));
-                                            //println!("Loaded Test Data: {:?}", test_spec);
+                                            )?;
+
+                                            tests.push(test);
                                         }
                                         Err(e) => {
                                             panic!(
@@ -88,15 +159,44 @@ impl Test {
                                     }
                                 }
                             }
-                            eprintln!("Key: {}", key);
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error Loading Test File: {}\n{}", path.display(), e);
+                    return Err(Error::from(e));
                 }
             }
         }
-        (config, tests)
+        Ok((config, tests))
+    }
+
+    pub async fn run(&mut self) {
+        println!("Running Test: {}", self.name);
+        //config: &Option<Arc<RwLock<ConfigData>>>,
+        //prior_steps: &HashMap<String, TestStepResult>,
+
+        let prior_steps: HashMap<String, TestStepResult> = HashMap::new();
+
+        for step in self.steps.iter_mut() {
+            let real_step = step.read().unwrap();
+            println!("Running Step");
+            match real_step.run(&self.config, &prior_steps).await {
+                Ok(result) => {
+                    if result.status != TestStepFailureReason::NoFailure {
+                        if let Some(emsg) = result.failure_message {
+                            println!("Error");
+                            println!("{}", emsg);
+                        }
+                    } else {
+                        println!("Success");
+                    }
+                }
+                Err(e) => {
+                    println!("ERROR");
+                    eprintln!("{}", e);
+                }
+            }
+            //step.run();
+        }
     }
 }
