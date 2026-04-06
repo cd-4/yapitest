@@ -247,9 +247,9 @@ fn load_tests(
     }
 }
 
-fn run_tests(tests: &mut Vec<Test>) {
+async fn run_tests(tests: &mut Vec<Test>) {
     for test in tests.iter_mut() {
-        test.run();
+        test.run().await;
     }
 }
 
@@ -324,5 +324,5 @@ fn main() {
     }
 
     println!("Collected {} Tests", tests.len());
-    run_tests(&mut tests);
+    run_tests(&mut tests).await;
 }

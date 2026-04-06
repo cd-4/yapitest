@@ -168,7 +168,7 @@ impl Test {
         Ok((config, tests))
     }
 
-    pub fn run(&mut self) {
+    pub async fn run(&mut self) {
         println!("Running Test: {}", self.name);
         //config: &Option<Arc<RwLock<ConfigData>>>,
         //prior_steps: &HashMap<String, TestStepResult>,
@@ -178,7 +178,15 @@ impl Test {
         for step in self.steps.iter_mut() {
             let real_step = step.read().unwrap();
             println!("Running Step");
-            let result = real_step.run(&self.config, &prior_steps);
+            match real_step.run(&self.config, &prior_steps).await {
+                Ok(result) => {
+                    println!("Success");
+                }
+                Err(e) => {
+                    println!("ERROR");
+                    //eprintln!("{}", e);
+                }
+            }
             //step.run();
         }
     }
