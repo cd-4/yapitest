@@ -497,23 +497,6 @@ impl RunnableTestStep for TestStep {
         }
 
         return Err(anyhow!("Temporary Error"));
-
-        /*
-        let res = client
-            .post("https://api.example.com/login")
-            .json(&payload)
-            .send()
-            .await?
-            .json::<Value>() // ← gets serde_json::Value
-            .await?;
-
-        println!("Response:\n{:#}", res);
-
-        // Access fields safely
-        if let Some(token) = res["token"].as_str() {
-            println!("Got token: {}", token);
-        }
-        */
     }
 
     fn get_status(&self) -> TestStepStatus {
