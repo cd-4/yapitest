@@ -576,6 +576,11 @@ impl TestStepResult {
         let mut first = true;
         let mut return_value: Option<Value> = None;
 
+        if self.output_data.is_some() {
+            return_value = self.output_data.clone();
+            first = false;
+        }
+
         for section in sections.iter() {
             if first {
                 if *section == "response" {
