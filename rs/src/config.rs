@@ -352,6 +352,7 @@ impl RunnableTestStep for TestStepGroup {
                     if let Ok(val) = step.get_field(output_key.clone()) {
                         if let Some(yaml_val) = val {
                             if let Ok(v) = serde_json::from_value(yaml_val) {
+                                println!("Adding Output: {}, {}", output_key.clone(), v);
                                 outputs.insert(output_key.clone(), v);
                                 continue;
                             }

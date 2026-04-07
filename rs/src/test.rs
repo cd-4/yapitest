@@ -178,9 +178,11 @@ impl Test {
         let mut prior_steps: HashMap<String, TestStepResult> = HashMap::new();
 
         if let (Some(setup_id), Some(cfg)) = (self.setup.clone(), &self.config) {
+            println!("Running Setup");
             match cfg.read().unwrap().get_step_group(setup_id.clone()) {
                 Ok(setup) => match setup.run(&self.config, &prior_steps).await {
                     Ok(result) => {
+                        println!("Adding Setup To Steps");
                         prior_steps.insert("setup".to_string(), result);
                     }
                     Err(e) => {
@@ -200,8 +202,7 @@ impl Test {
                 Ok(result) => {
                     if result.status != TestStepFailureReason::NoFailure {
                         if let Some(emsg) = result.failure_message {
-                            println!("Error");
-                            println!("{}", emsg);
+                            println!("Error: {}", emsg);
                         }
                     } else {
                         if let Some(id) = real_step.get_id() {
@@ -211,8 +212,7 @@ impl Test {
                     }
                 }
                 Err(e) => {
-                    println!("ERROR");
-                    eprintln!("{}", e);
+                    eprintln!("Error: {}", e);
                 }
             }
             //step.run();
