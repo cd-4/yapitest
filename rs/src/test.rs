@@ -175,7 +175,19 @@ impl Test {
         //config: &Option<Arc<RwLock<ConfigData>>>,
         //prior_steps: &HashMap<String, TestStepResult>,
 
-        let prior_steps: HashMap<String, TestStepResult> = HashMap::new();
+        let mut prior_steps: HashMap<String, TestStepResult> = HashMap::new();
+
+        if let Some(setup_id) = self.setup.clone() {
+            let setup = TestStepGroupReference::from_id(setup_id);
+            match setup.run(&self.config, &prior_steps).await {
+                Ok(result) => {
+                    prior_steps.insert("setup".to_string(), result);
+                }
+                Err(e) => {
+                    eprintln!("Test Setup Failed: {}", e);
+                }
+            }
+        }
 
         for step in self.steps.iter_mut() {
             let real_step = step.read().unwrap();
@@ -188,6 +200,9 @@ impl Test {
                             println!("{}", emsg);
                         }
                     } else {
+                        if let Some(id) = real_step.get_id() {
+                            prior_steps.insert(id.clone(), result);
+                        }
                         println!("Success");
                     }
                 }
