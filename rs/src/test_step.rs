@@ -86,7 +86,7 @@ pub struct TestStepResult {
 
 pub fn get_variable(
     name: String,
-    config: &ConfigData,
+    config: &Option<Arc<RwLock<ConfigData>>>,
     prior_steps: &HashMap<String, TestStepResult>,
 ) -> Result<Value> {
     if !name.starts_with('$') {
@@ -96,30 +96,34 @@ pub fn get_variable(
     'outer: while current_key.starts_with('$') {
         let mut value_key = current_key.clone();
         value_key.remove(0);
-        if let Ok(new_val) = config.get_string_value(value_key.clone()) {
-            current_key = new_val;
-        } else {
-            for (step_id, step) in prior_steps.iter() {
-                let mut new_key: String = step_id.clone();
-                new_key.push('.');
-                if new_key.starts_with(&new_key.clone()) {
-                    let trimmed_str = value_key.strip_prefix(&new_key).unwrap();
-                    match step.get_field(trimmed_str.to_string()) {
-                        Ok(value) => {
-                            if let Some(v) = value {
-                                if let Some(string_val) = v.as_str() {
-                                    if string_val.starts_with('$') {
-                                        continue 'outer;
-                                    }
+
+        if let Some(cfg) = config {
+            if let Ok(new_val) = cfg.read().unwrap().get_string_value(value_key.clone()) {
+                current_key = new_val;
+                continue 'outer;
+            }
+        }
+
+        for (step_id, step) in prior_steps.iter() {
+            let mut new_key: String = step_id.clone();
+            new_key.push('.');
+            if new_key.starts_with(&new_key.clone()) {
+                let trimmed_str = value_key.strip_prefix(&new_key).unwrap();
+                match step.get_field(trimmed_str.to_string()) {
+                    Ok(value) => {
+                        if let Some(v) = value {
+                            if let Some(string_val) = v.as_str() {
+                                if string_val.starts_with('$') {
+                                    continue 'outer;
                                 }
-                                return Ok(v);
-                            } else {
-                                return Err(anyhow!("Value not found: {}", name));
                             }
+                            return Ok(v);
+                        } else {
+                            return Err(anyhow!("Value not found: {}", name));
                         }
-                        Err(e) => {
-                            return Err(e);
-                        }
+                    }
+                    Err(e) => {
+                        return Err(e);
                     }
                 }
             }
@@ -130,7 +134,7 @@ pub fn get_variable(
 
 pub fn clean_data(
     value: &Value,
-    config: &ConfigData,
+    config: &Option<Arc<RwLock<ConfigData>>>,
     prior_steps: &HashMap<String, TestStepResult>,
 ) -> Result<Value> {
     if let Some(map) = value.clone().as_object_mut() {
@@ -166,68 +170,6 @@ pub fn clean_data(
     return Ok(value.clone());
 }
 
-/*
-    fn clean_expected_response(
-        &self,
-        config: &ConfigData,
-        expected_response: &Value,
-        prior_steps: &HashMap<String, TestStepResult>,
-    ) -> Result<Value> {
-        let mut clone_res = expected_response.clone();
-        if let Some(ref mut map) = clone_res.as_object_mut() {
-            let keys: Vec<String> = map.iter().filter_map(|(k, _)| Some(k.clone())).collect();
-
-            for k in keys.iter() {
-                if let Some(value) = map.get_mut(k) {
-                    match self.clean_expected_response(&config, value, prior_steps) {
-                        Ok(new_value) => {
-                            map.insert(k.clone(), new_value);
-                        }
-                        Err(e) => {
-                            return Err(e);
-                        }
-                    }
-                }
-            }
-            return Ok(Value::Object(map.clone()));
-        } else if let Some(ref mut vec) = clone_res.as_array_mut() {
-            // Build a completely new vector from the cleaned items
-            let mut cleaned_vec: Vec<Value> = Vec::with_capacity(vec.len());
-
-            for item in vec.iter_mut() {
-                let cleaned_item = self.clean_expected_response(config, item, prior_steps)?;
-                cleaned_vec.push(cleaned_item);
-            }
-
-            return Ok(Value::Array(cleaned_vec));
-        } else if let Some(str) = expected_response.as_str() {
-            if str.starts_with('$') {
-                let mut config_key = str.to_string();
-                config_key.remove(0); // remove leading $
-
-                if let Ok(new_value) = config.get_string_value(config_key.clone()) {
-                    return Ok(Value::String(new_value));
-                }
-
-                for (_step_id, step) in prior_steps.iter() {
-                    if let Ok(result) = step.get_field(config_key.clone()) {
-                        if let Some(res) = result {
-                            return Ok(res.clone());
-                        } else {
-                            continue;
-                        }
-                    }
-                }
-                return Err(anyhow!("Key {} not found", str));
-            } else {
-                return Ok(expected_response.clone());
-            }
-        } else {
-            return Ok(expected_response.clone());
-        }
-    }
-*/
-
 pub fn check_size(val: &Value, size_str: String) -> bool {
     return false;
 }
@@ -237,6 +179,8 @@ pub fn compare_data_objects(
     expected_object: &Map<String, Value>,
     full: bool,
     keys: String,
+    config: &Option<Arc<RwLock<ConfigData>>>,
+    prior_steps: &HashMap<String, TestStepResult>,
 ) -> Result<()> {
     for key in observed_object.keys() {
         let observed = observed_object.get(key).unwrap();
@@ -258,7 +202,14 @@ pub fn compare_data_objects(
 
         let expected = exp_value.unwrap();
 
-        compare_data_inner(observed, expected, full, format!("{}.{}", keys, key))?;
+        compare_data_inner(
+            observed,
+            expected,
+            full,
+            format!("{}.{}", keys, key),
+            config,
+            prior_steps,
+        )?;
     }
 
     Ok(())
@@ -269,6 +220,8 @@ pub fn compare_array_objects(
     expected_object: &Vec<Value>,
     full: bool,
     keys: String,
+    config: &Option<Arc<RwLock<ConfigData>>>,
+    prior_steps: &HashMap<String, TestStepResult>,
 ) -> Result<()> {
     let num_expected = expected_object.len();
     let num_observed = observed_object.len();
@@ -287,28 +240,56 @@ pub fn compare_array_objects(
         .enumerate()
     {
         let new_keys = format!("{}.[{}]", keys, index);
-        compare_data_inner(observed, expected, full, new_keys)?;
+        compare_data_inner(observed, expected, full, new_keys, config, prior_steps)?;
     }
 
     Ok(())
 }
 
-pub fn compare_primitive_values(observed: &Value, expected: &Value, keys: String) -> Result<()> {
+pub fn compare_primitive_values(
+    observed: &Value,
+    expected: &Value,
+    keys: String,
+    config: &Option<Arc<RwLock<ConfigData>>>,
+    prior_steps: &HashMap<String, TestStepResult>,
+) -> Result<()> {
     if let Some(exp_str) = expected.as_str() {
         if exp_str.starts_with('+') {
             let mut exp_type = exp_str.to_string();
             exp_type.remove(0);
-            if (exp_type == "str" || exp_type == "string") && observed.as_str().is_none() {
-                return Err(anyhow!("Expected string for {}", keys));
-            } else if (exp_type == "float" || exp_type == "flt") && observed.as_f64().is_none() {
-                return Err(anyhow!("Expected float for {}", keys));
+            if (exp_type == "str" || exp_type == "string") {
+                if observed.as_str().is_none() {
+                    return Err(anyhow!("Expected string for {}", keys));
+                } else {
+                    return Ok(());
+                }
+            } else if (exp_type == "float" || exp_type == "flt") {
+                if observed.as_f64().is_none() {
+                    return Err(anyhow!("Expected float for {}", keys));
+                } else {
+                    return Ok(());
+                }
             } else if exp_type == "int" && observed.as_i64().is_none() {
-                return Err(anyhow!("Expected int for {}", keys));
+                if observed.as_i64().is_none() {
+                    return Err(anyhow!("Expected int for {}", keys));
+                } else {
+                    return Ok(());
+                }
             }
         } else if exp_str.starts_with("len") {
             let size_str = exp_str.strip_prefix("len").unwrap();
             if !check_size(observed, size_str.to_string()) {
                 return Err(anyhow!("Size Incorrect TODO"));
+            }
+        } else if exp_str.starts_with("$") {
+            let exp_var = get_variable(exp_str.to_string(), config, prior_steps)?;
+            if &exp_var != observed {
+                return Err(anyhow!(
+                    "For key: {} Expected: {} | Value Found {}",
+                    keys,
+                    exp_var,
+                    observed,
+                ));
             }
         }
     }
@@ -338,27 +319,33 @@ pub fn compare_data_inner(
     expected: &Value,
     full: bool,
     keys: String,
+    config: &Option<Arc<RwLock<ConfigData>>>,
+    prior_steps: &HashMap<String, TestStepResult>,
 ) -> Result<()> {
     if let (Some(obs_obj), Some(exp_obj)) = (observed.as_object(), expected.as_object()) {
-        compare_data_objects(obs_obj, exp_obj, full, keys)
+        compare_data_objects(obs_obj, exp_obj, full, keys, config, prior_steps)
     } else if let (Some(obs_arr), Some(exp_arr)) = (observed.as_array(), expected.as_array()) {
-        compare_array_objects(obs_arr, exp_arr, full, keys)
+        compare_array_objects(obs_arr, exp_arr, full, keys, config, prior_steps)
     } else {
-        compare_primitive_values(observed, expected, keys)
+        compare_primitive_values(observed, expected, keys, config, prior_steps)
     }
 }
 
 pub fn compare_data(
     observed: &Value,
     expected: &Value,
-    config: &ConfigData,
+    config: &Option<Arc<RwLock<ConfigData>>>,
     prior_steps: &HashMap<String, TestStepResult>,
     full: bool,
 ) -> Result<()> {
-    match clean_data(expected, config, prior_steps) {
-        Ok(exp) => compare_data_inner(observed, &exp, full, "".to_string()),
-        Err(e) => Err(anyhow!("Error cleaning expected data {}", e)),
-    }
+    compare_data_inner(
+        observed,
+        expected,
+        full,
+        "".to_string(),
+        config,
+        prior_steps,
+    )
 }
 
 impl TestStepResult {
@@ -731,42 +718,18 @@ impl RunnableTestStep for TestStep {
                 if let Some(expected_response) = self.expected_response_data.clone() {
                     match response.json::<Value>().await {
                         Ok(actual_response) => {
-                            match self.get_expected_response(
-                                &config,
+                            if let Err(e) = compare_data(
+                                &actual_response,
                                 &expected_response,
+                                config,
                                 prior_steps,
+                                !self.allow_missing_fields,
                             ) {
-                                Ok(expected) => {
-                                    if let Err(e) = self.check_response(
-                                        &config,
-                                        &expected,
-                                        &actual_response,
-                                        prior_steps,
-                                        true,
-                                    ) {
-                                        let failure_message = format!("Response Incorrect: {}", e);
-                                        return Ok(TestStepResult::make_failure(
-                                            TestStepFailureReason::ResponseError,
-                                            failure_message,
-                                        ));
-                                    }
-
-                                    return Ok(TestStepResult {
-                                        status: TestStepFailureReason::NoFailure,
-                                        failure_message: None,
-                                        request_data: Some(self.request_data.clone()),
-                                        response_data: Some(actual_response),
-                                        output_data: None,
-                                    });
-                                }
-                                Err(e) => {
-                                    let failure_message =
-                                        format!("Unable to Decode Expected Response: {}", e);
-                                    return Ok(TestStepResult::make_failure(
-                                        TestStepFailureReason::ResponseError,
-                                        failure_message,
-                                    ));
-                                }
+                                let failure_message = format!("Assertion Error: {}", e);
+                                return Ok(TestStepResult::make_failure(
+                                    TestStepFailureReason::ResponseError,
+                                    failure_message,
+                                ));
                             }
                         }
                         Err(e) => {
