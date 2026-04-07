@@ -352,7 +352,7 @@ impl RunnableTestStep for TestStepGroup {
                     output_sections.remove(0);
                     let field_key = output_sections.join(".");
                     if let Ok(val) = step.get_field(field_key.clone()) {
-                        println!("Got Field! {:?}", val);
+                        println!("Got Field! {:?} {:?}", val, field_key.clone());
                         if let Some(yaml_val) = val {
                             if let Ok(v) = serde_json::from_value(yaml_val) {
                                 println!(
