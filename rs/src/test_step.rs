@@ -177,11 +177,11 @@ pub fn clean_headers(
                         let val = HeaderValue::from_str(header_str).unwrap();
                         output.insert(name, val);
                     } else {
-                        return Err(anyhow!("Invalid Header {}:{}", k, v));
+                        return Err(anyhow!("Invalid Header {}: {}", k, v));
                     }
                 }
                 Err(e) => {
-                    return Err(anyhow!("Invalid Header {}:{} ({})", k, v, e));
+                    return Err(anyhow!("Invalid Header {}: {} ({})", k, v, e));
                 }
             }
         } else {
