@@ -101,6 +101,7 @@ pub fn get_variable(
         value_key.remove(0);
 
         if let Some(cfg) = config {
+            println!("Getting Config Value: {}", value_key);
             if let Ok(new_val) = cfg.read().unwrap().get_string_value(value_key.clone()) {
                 current_key = new_val;
                 continue 'outer;
@@ -122,7 +123,7 @@ pub fn get_variable(
                             }
                             return Ok(v);
                         } else {
-                            return Err(anyhow!("Value not found: {}", name));
+                            return Err(anyhow!("1 Value not found: {}", name));
                         }
                     }
                     Err(e) => {
@@ -132,9 +133,9 @@ pub fn get_variable(
             }
         }
 
-        return Err(anyhow!("Value not found: {}", name));
+        return Err(anyhow!("2 Value not found: {}", name));
     }
-    Err(anyhow!("Value not found: {}", name))
+    Err(anyhow!("3 Value not found: {}", name))
 }
 
 pub fn clean_request_data(
@@ -770,9 +771,9 @@ impl RunnableTestStep for TestStep {
 
         let headers = clean_headers(&self.header_data, config, prior_steps)?;
 
-        println!("Request Data: {}", self.request_data);
-
+        println!("Cleaning Request Data");
         let req_data = clean_request_data(&self.request_data, config, prior_steps)?;
+        println!("Request Data: {}", req_data);
 
         match client
             .request(self.method.clone(), full_url)
