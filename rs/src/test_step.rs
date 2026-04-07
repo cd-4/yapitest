@@ -800,9 +800,9 @@ impl RunnableTestStep for TestStep {
                     }
                 }
 
-                if let Some(expected_response) = self.expected_response_data.clone() {
-                    match response.json::<Value>().await {
-                        Ok(actual_response) => {
+                match response.json::<Value>().await {
+                    Ok(actual_response) => {
+                        if let Some(expected_response) = self.expected_response_data.clone() {
                             if let Err(e) = compare_data(
                                 &actual_response,
                                 &expected_response,
@@ -816,15 +816,15 @@ impl RunnableTestStep for TestStep {
                                     failure_message,
                                 ));
                             }
-                            response_data = Some(actual_response.clone());
                         }
-                        Err(e) => {
-                            let failure_message = format!("Error Decoding Json: {}", e);
-                            return Ok(TestStepResult::make_failure(
-                                TestStepFailureReason::JsonDecodeError,
-                                failure_message,
-                            ));
-                        }
+                        response_data = Some(actual_response.clone());
+                    }
+                    Err(e) => {
+                        let failure_message = format!("Error Decoding Json: {}", e);
+                        return Ok(TestStepResult::make_failure(
+                            TestStepFailureReason::JsonDecodeError,
+                            failure_message,
+                        ));
                     }
                 }
             }
