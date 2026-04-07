@@ -835,7 +835,7 @@ impl RunnableTestStep for TestStep {
         return Ok(TestStepResult {
             status: TestStepFailureReason::NoFailure,
             failure_message: None,
-            request_data: Some(self.request_data.clone()),
+            request_data: Some(req_data),
             response_data: None,
             output_data: None,
         });
