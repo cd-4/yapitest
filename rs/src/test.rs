@@ -177,14 +177,18 @@ impl Test {
 
         let mut prior_steps: HashMap<String, TestStepResult> = HashMap::new();
 
-        if let Some(setup_id) = self.setup.clone() {
-            let setup = TestStepGroupReference::from_id(setup_id);
-            match setup.run(&self.config, &prior_steps).await {
-                Ok(result) => {
-                    prior_steps.insert("setup".to_string(), result);
-                }
+        if let (Some(setup_id), Some(cfg)) = (self.setup.clone(), &self.config) {
+            match cfg.read().unwrap().get_step_group(setup_id.clone()) {
+                Ok(setup) => match setup.run(&self.config, &prior_steps).await {
+                    Ok(result) => {
+                        prior_steps.insert("setup".to_string(), result);
+                    }
+                    Err(e) => {
+                        eprintln!("Test Setup Failed: {}", e);
+                    }
+                },
                 Err(e) => {
-                    eprintln!("Test Setup Failed: {}", e);
+                    eprintln!("Error finding setup: {}", setup_id.clone());
                 }
             }
         }
