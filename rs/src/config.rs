@@ -354,6 +354,10 @@ impl RunnableTestStep for TestStepGroup {
                     output_sections.remove(0);
                     let field_key = output_sections.join(".");
                     println!("Getting Field in {} ({})", step_id, field_key.clone());
+                    println!(
+                        "{:?} {:?} {:?}",
+                        step.output_data, step.request_data, step.response_data
+                    );
                     if let Ok(val) = step.get_field(field_key.clone()) {
                         println!("Got Field! {:?}", val);
                         if let Some(yaml_val) = val {

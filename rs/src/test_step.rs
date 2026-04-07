@@ -80,9 +80,9 @@ pub struct TestStep {
 }
 
 pub struct TestStepResult {
-    response_data: Option<Value>,
-    request_data: Option<Value>,
-    output_data: Option<Value>,
+    pub response_data: Option<Value>,
+    pub request_data: Option<Value>,
+    pub output_data: Option<Value>,
     pub status: TestStepFailureReason,
     pub failure_message: Option<String>,
 }
@@ -532,7 +532,7 @@ impl TestStepResult {
             if first {
                 if *section == "response" {
                     return_value = self.response_data.clone();
-                } else if *section == "request" {
+                } else if *section == "request" || *section == "data" {
                     return_value = self.request_data.clone();
                 } else if *section == "output" {
                     return_value = self.output_data.clone();
