@@ -1,6 +1,7 @@
 use crate::config::ConfigData;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Method};
 use serde::Deserialize;
@@ -230,8 +231,83 @@ pub fn clean_data(
     return Ok(value.clone());
 }
 
-pub fn check_size(val: &Value, size_str: String) -> bool {
-    return false;
+#[derive(Debug, PartialEq)]
+enum Operator {
+    Gt,  // >
+    Gte, // >=
+    Lt,  // <
+    Lte, // <=
+    Eq,  // =
+}
+
+#[derive(Debug, PartialEq)]
+struct Comparison {
+    op: Operator,
+    value: i64, // or f64 if you need floats
+}
+
+fn parse_comparison(s: &str) -> Result<Comparison, String> {
+    // Matches optional spaces around the operator and number
+    let re = Regex::new(r"^\s*([<>]=?|=?)\s*(\d+)\s*$").map_err(|e| e.to_string())?;
+
+    let caps = re
+        .captures(s.trim())
+        .ok_or_else(|| format!("Invalid comparison format: '{}'", s))?;
+
+    let op_str = caps.get(1).unwrap().as_str();
+    let num_str = caps.get(2).unwrap().as_str();
+
+    let op = match op_str {
+        ">" => Operator::Gt,
+        ">=" => Operator::Gte,
+        "<" => Operator::Lt,
+        "<=" => Operator::Lte,
+        "=" | "" => Operator::Eq, // allow "=" or even just the number (treat as =)
+        _ => return Err(format!("Unknown operator: {}", op_str)),
+    };
+
+    let value: i64 = num_str.parse::<i64>().map_err(|e| e.to_string())?;
+
+    Ok(Comparison { op, value })
+}
+
+pub fn get_value_length(val: &Value) -> Result<i64> {
+    if let Some(value_str) = val.as_str() {
+        return Ok(value_str.len() as i64);
+    } else if let Some(value_arr) = val.as_array() {
+        return Ok(value_arr.len() as i64);
+    } else if let Some(value_obj) = val.as_object() {
+        return Ok(value_obj.len() as i64);
+    }
+
+    Err(anyhow!("Size could not be determined for {}", val))
+}
+
+pub fn check_size(val: &Value, size_str: String) -> Result<bool> {
+    let value_size = get_value_length(val)?;
+
+    match parse_comparison(&size_str) {
+        Ok(cmp) => match cmp.op {
+            Operator::Gt => {
+                return Ok(value_size > cmp.value);
+            }
+            Operator::Lt => {
+                return Ok(value_size < cmp.value);
+            }
+            Operator::Eq => {
+                return Ok(value_size == cmp.value);
+            }
+            Operator::Gte => {
+                return Ok(value_size >= cmp.value);
+            }
+            Operator::Lte => {
+                return Ok(value_size <= cmp.value);
+            }
+        },
+        Err(e) => {
+            return Err(anyhow!("Unable to pare comparison: {}", e));
+        }
+    }
 }
 
 pub fn compare_data_objects(
@@ -248,11 +324,23 @@ pub fn compare_data_objects(
 
         if exp_value.is_none() {
             let size_str: String = format!("len({})", key);
-            if let Some(expected_size) = expected_object.get(&size_str) {}
-
-            if full {
+            if let Some(expected_size) = expected_object.get(&size_str) {
+                match check_size(observed, expected_size.as_str().unwrap().to_string()) {
+                    Ok(is_correct_size) => {
+                        if !is_correct_size {
+                            return Err(anyhow!(
+                                "Incorrect Size: len({}.{}) !{}",
+                                keys,
+                                key,
+                                expected_size
+                            ));
+                        }
+                    }
+                    Err(e) => {}
+                }
+            } else if full {
                 return Err(anyhow!(
-                    "'full' set and value '{}.{}' was not found",
+                    "'full' is set and value '{}.{}' was not found",
                     keys,
                     key
                 ));
@@ -335,11 +423,6 @@ pub fn compare_primitive_values(
                 } else {
                     return Ok(());
                 }
-            }
-        } else if exp_str.starts_with("len") {
-            let size_str = exp_str.strip_prefix("len").unwrap();
-            if !check_size(observed, size_str.to_string()) {
-                return Err(anyhow!("Size Incorrect TODO"));
             }
         } else if exp_str.starts_with("$") {
             let exp_var = get_variable(exp_str.to_string(), config, prior_steps)?;
