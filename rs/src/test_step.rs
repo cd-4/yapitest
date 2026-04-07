@@ -775,6 +775,7 @@ impl RunnableTestStep for TestStep {
         let headers = clean_headers(&self.header_data, config, prior_steps)?;
 
         let req_data = clean_request_data(&self.request_data, config, prior_steps)?;
+        let mut response_data: Option<Value> = None;
 
         match client
             .request(self.method.clone(), full_url)
@@ -815,6 +816,8 @@ impl RunnableTestStep for TestStep {
                                     failure_message,
                                 ));
                             }
+                            response_data = Some(actual_response.clone());
+                            println!(">> Response: {}", actual_response.clone());
                         }
                         Err(e) => {
                             let failure_message = format!("Error Decoding Json: {}", e);
@@ -834,7 +837,7 @@ impl RunnableTestStep for TestStep {
             status: TestStepFailureReason::NoFailure,
             failure_message: None,
             request_data: Some(req_data),
-            response_data: None,
+            response_data,
             output_data: None,
         });
     }
