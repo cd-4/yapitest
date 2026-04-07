@@ -108,7 +108,10 @@ impl ConfigData {
         }
 
         if let Some(parent) = &self.parent {
-            return parent.read().unwrap().get_step_group(step_group_key);
+            let r = parent.read();
+            let u = r.unwrap();
+            let step_group = u.get_step_group(step_group_key);
+            return step_group;
         }
         return Err(anyhow!("Step Group {} Not Found", step_group_key));
     }
