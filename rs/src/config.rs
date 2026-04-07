@@ -22,6 +22,7 @@ pub struct TestStepGroup {
     id: Option<String>,
     steps: Vec<Arc<dyn RunnableTestStep + Send + Sync>>,
     status: TestStepStatus,
+    outputs: HashMap<String, String>,
     run_once: bool,
     has_run: bool,
 }
@@ -72,8 +73,11 @@ impl TestStepGroup {
             status: TestStepStatus::NotRun,
             run_once: once,
             has_run: false,
+            outputs: spec.output,
         }
     }
+
+    pub fn from_id(id: String, config: &Option<Arc<RwLock<ConfigData>>>) -> TestStepGroup {}
 }
 
 pub struct ConfigVariable {
@@ -256,36 +260,6 @@ impl ConfigData {
         let spec = ConfigData::spec_from_file(path)?;
         ConfigData::from_spec(path, spec)
     }
-
-    /*
-    pub fn get_step_set(&self, key: String) -> Option<&TestStepGroup> {
-        let retrieved_value = self.step_sets.get(&key);
-        match retrieved_value {
-            Some(_) => {
-                return retrieved_value;
-            }
-            None => match &self.parent {
-                Some(parent) => parent.get_step_set(key),
-                None => None,
-            },
-        }
-    }
-
-    pub fn get_keys(&self, keys: Vec<String>) -> Option<&Value> {
-        let mut current_value = &self.data;
-        for key in keys.iter() {
-            let opt_val = current_value.get(key);
-            match opt_val {
-                Some(val) => {
-                    current_value = val;
-                }
-                None => return None,
-            }
-        }
-
-        Some(current_value)
-    }
-    */
 }
 
 impl TestStepGroupReference {
@@ -336,11 +310,48 @@ impl RunnableTestStep for TestStepGroup {
                     }
                 }
                 Err(e) => {
-                    return Err(e);
+                    return Err(anyhow!("Error running step: {}", e));
                 }
             }
         }
-        Err(anyhow!("Error"))
+
+        let mut outputs: HashMap<String, serde_json::Value> = HashMap::new();
+
+        for (output_key, output_value) in self.outputs.iter() {
+            if !output_key.starts_with('$') {
+                let mut output_str_copy = output_key.clone();
+                output_str_copy.remove(0);
+
+                let output_sections: Vec<String> =
+                    output_str_copy.split('.').map(|v| v.to_string()).collect();
+                let step_id = output_sections.get(0)?;
+                if let Some(step) = local_steps.get(step_id) {
+                    output_sections.remove(0);
+                    let output_key = output_sections.join(".");
+                    if let Ok(val) = step.get_field(output_key) {
+                        if let Some(yaml_val) = val {
+                            if let Ok(v) = serde_json::from_value(yaml_val) {
+                                outputs.insert(output_key.clone(), v);
+                                continue;
+                            }
+                        }
+                        return Err(anyhow!(
+                            "Field {} not found in step {}",
+                            output_key,
+                            step_id
+                        ));
+                    }
+                } else {
+                    return Err(anyhow!("Step {} not found.", step_id));
+                }
+            }
+        }
+
+        return Ok(TestStepResult::make_success(
+            serde_yaml::from_value(Value::Null)?,
+            serde_yaml::from_value(Value::Null)?,
+            serde_json::to_value(outputs)?,
+        ));
     }
 
     fn get_status(&self) -> TestStepStatus {
