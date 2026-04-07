@@ -331,8 +331,8 @@ impl RunnableTestStep for TestStepGroup {
         let mut outputs: HashMap<String, serde_json::Value> = HashMap::new();
 
         for (output_key, output_value) in self.outputs.iter() {
-            if output_key.starts_with('$') {
-                let mut output_str_copy = output_key.clone();
+            if output_value.starts_with('$') {
+                let mut output_str_copy = output_value.clone();
                 output_str_copy.remove(0);
 
                 let mut output_sections: Vec<String> =
@@ -348,11 +348,15 @@ impl RunnableTestStep for TestStepGroup {
 
                 if let Some(step) = local_steps.get(&step_id) {
                     output_sections.remove(0);
-                    let output_key = output_sections.join(".");
-                    if let Ok(val) = step.get_field(output_key.clone()) {
+                    let field_key = output_sections.join(".");
+                    if let Ok(val) = step.get_field(field_key.clone()) {
                         if let Some(yaml_val) = val {
                             if let Ok(v) = serde_json::from_value(yaml_val) {
-                                println!("Adding Output: {}, {}", output_key.clone(), v);
+                                println!(
+                                    ">> Adding Step Group Output: {}, {}",
+                                    output_key.clone(),
+                                    v
+                                );
                                 outputs.insert(output_key.clone(), v);
                                 continue;
                             }

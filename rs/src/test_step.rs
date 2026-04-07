@@ -527,6 +527,13 @@ impl TestStepResult {
         let mut first = true;
 
         let mut return_value: Option<Value> = None;
+
+        if self.output_data.is_some() {
+            return_value = self.output_data.clone();
+            first = false;
+        }
+
+        println!("Getting Field: {}", keys);
         for section in sections.iter() {
             if first {
                 if *section == "response" {
@@ -554,99 +561,6 @@ impl TestStepResult {
 }
 
 impl TestStep {
-    fn get_expected_response(
-        &self,
-        config: &Option<Arc<RwLock<ConfigData>>>,
-        expected_res: &Value,
-        prior_steps: &HashMap<String, TestStepResult>,
-    ) -> Result<Value> {
-        if let Some(cfg) = config {
-            return self.get_expected_response_inner(
-                &cfg.read().unwrap(),
-                expected_res,
-                prior_steps,
-            );
-        } else {
-            return Ok(expected_res.clone());
-        }
-    }
-
-    fn get_expected_response_inner(
-        &self,
-        config: &ConfigData,
-        expected_res: &Value,
-        prior_steps: &HashMap<String, TestStepResult>,
-    ) -> Result<Value> {
-        match self.clean_expected_response(config, expected_res, prior_steps) {
-            Ok(response) => {
-                return Ok(response);
-            }
-            Err(e) => {
-                return Err(e);
-            }
-        }
-    }
-
-    fn clean_expected_response(
-        &self,
-        config: &ConfigData,
-        expected_response: &Value,
-        prior_steps: &HashMap<String, TestStepResult>,
-    ) -> Result<Value> {
-        let mut clone_res = expected_response.clone();
-        if let Some(ref mut map) = clone_res.as_object_mut() {
-            let keys: Vec<String> = map.iter().filter_map(|(k, _)| Some(k.clone())).collect();
-
-            for k in keys.iter() {
-                if let Some(value) = map.get_mut(k) {
-                    match self.clean_expected_response(&config, value, prior_steps) {
-                        Ok(new_value) => {
-                            map.insert(k.clone(), new_value);
-                        }
-                        Err(e) => {
-                            return Err(e);
-                        }
-                    }
-                }
-            }
-            return Ok(Value::Object(map.clone()));
-        } else if let Some(ref mut vec) = clone_res.as_array_mut() {
-            // Build a completely new vector from the cleaned items
-            let mut cleaned_vec: Vec<Value> = Vec::with_capacity(vec.len());
-
-            for item in vec.iter_mut() {
-                let cleaned_item = self.clean_expected_response(config, item, prior_steps)?;
-                cleaned_vec.push(cleaned_item);
-            }
-
-            return Ok(Value::Array(cleaned_vec));
-        } else if let Some(str) = expected_response.as_str() {
-            if str.starts_with('$') {
-                let mut config_key = str.to_string();
-                config_key.remove(0); // remove leading $
-
-                if let Ok(new_value) = config.get_string_value(config_key.clone()) {
-                    return Ok(Value::String(new_value));
-                }
-
-                for (_step_id, step) in prior_steps.iter() {
-                    if let Ok(result) = step.get_field(config_key.clone()) {
-                        if let Some(res) = result {
-                            return Ok(res.clone());
-                        } else {
-                            continue;
-                        }
-                    }
-                }
-                return Err(anyhow!("Key {} not found", str));
-            } else {
-                return Ok(expected_response.clone());
-            }
-        } else {
-            return Ok(expected_response.clone());
-        }
-    }
-
     fn check_status_code(exp: Value, actual: u16) -> bool {
         if let Some(int_val) = exp.as_u64() {
             return int_val == u64::from(actual);
@@ -662,40 +576,6 @@ impl TestStep {
                 .all(|(exp_char, act_char)| exp_char == 'x' || exp_char == act_char);
         }
         return false;
-    }
-
-    fn check_response(
-        &self,
-        config: &Option<Arc<RwLock<ConfigData>>>,
-        expected: &Value,
-        actual: &Value,
-        prior_steps: &HashMap<String, TestStepResult>,
-        full: bool,
-    ) -> Result<()> {
-        let mut compare_mode = serde_json_assert::CompareMode::Inclusive;
-        if full {
-            compare_mode = serde_json_assert::CompareMode::Strict;
-        }
-
-        let assert_config =
-            serde_json_assert::Config::new(compare_mode).consider_array_sorting(false);
-
-        match self.get_expected_response(config, expected, prior_steps) {
-            Ok(exp) => {
-                match serde_json_assert::assert_json_matches_no_panic(actual, &exp, &assert_config)
-                {
-                    Ok(_res) => {
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        return Err(anyhow!(e));
-                    }
-                }
-            }
-            Err(e) => {
-                return Err(anyhow!(e));
-            }
-        }
     }
 
     fn get_identifier(&self, num_prior_steps: usize) -> String {
