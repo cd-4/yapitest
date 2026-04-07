@@ -100,6 +100,19 @@ pub struct ConfigData {
 }
 
 impl ConfigData {
+    pub fn get_step_group(&self, step_group_key: String) -> Result<&TestStepGroup> {
+        if let Some(step_sets) = self.step_sets.as_ref() {
+            if let Some(step_group) = step_sets.get(&step_group_key) {
+                return Ok(step_group);
+            }
+        }
+
+        if let Some(parent) = &self.parent {
+            return parent.read().unwrap().get_step_group(step_group_key);
+        }
+        return Err(anyhow!("Step Group {} Not Found", step_group_key));
+    }
+
     pub fn get_string_value(&self, key: String) -> Result<String> {
         let string_keys: Vec<String> = key.split('.').map(|v| v.to_string()).collect();
         if string_keys[0] == "urls" {
