@@ -187,10 +187,12 @@ impl Test {
                     }
                     Err(e) => {
                         eprintln!("Test Setup Failed: {}", e);
+                        panic!("ER");
                     }
                 },
                 Err(e) => {
                     eprintln!("Error finding setup: {}", setup_id.clone());
+                    panic!("ER");
                 }
             }
         }
@@ -203,6 +205,7 @@ impl Test {
                     if result.status != TestStepFailureReason::NoFailure {
                         if let Some(emsg) = result.failure_message {
                             println!("Error: {}", emsg);
+                            panic!("ER");
                         }
                     } else {
                         if let Some(id) = real_step.get_id() {
@@ -213,6 +216,7 @@ impl Test {
                 }
                 Err(e) => {
                     eprintln!("Error: {}", e);
+                    panic!("ER");
                 }
             }
             //step.run();
