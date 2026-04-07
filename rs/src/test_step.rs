@@ -527,7 +527,6 @@ impl TestStepResult {
         let mut first = true;
         let mut return_value: Option<Value> = None;
 
-        println!("Getting Field: {}", keys);
         for section in sections.iter() {
             if first {
                 if *section == "response" {
