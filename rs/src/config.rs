@@ -349,7 +349,9 @@ impl RunnableTestStep for TestStepGroup {
                 if let Some(step) = local_steps.get(&step_id) {
                     output_sections.remove(0);
                     let field_key = output_sections.join(".");
+                    println!("Getting Field in {} ({})", step_id, field_key.clone());
                     if let Ok(val) = step.get_field(field_key.clone()) {
+                        println!("Got Field! {:?}", val);
                         if let Some(yaml_val) = val {
                             if let Ok(v) = serde_json::from_value(yaml_val) {
                                 println!(
