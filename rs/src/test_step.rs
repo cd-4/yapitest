@@ -1,8 +1,10 @@
 use crate::config::ConfigData;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Method};
 use serde::Deserialize;
+
 use serde_json::{Map, Value};
 use std::any::Any;
 use std::collections::HashMap;
@@ -155,6 +157,37 @@ pub fn clean_path(
     output = format!("/{}", output);
     if ends_with_slash {
         output = format!("{}/", output);
+    }
+    Ok(output)
+}
+
+pub fn clean_headers(
+    header_data: &HashMap<String, String>,
+    config: &Option<Arc<RwLock<ConfigData>>>,
+    prior_steps: &HashMap<String, TestStepResult>,
+) -> Result<HeaderMap> {
+    let mut output: HeaderMap = HeaderMap::new();
+    for (k, v) in header_data.iter() {
+        if v.starts_with("$") {
+            match get_variable(v.to_string(), config, prior_steps) {
+                Ok(header_value) => {
+                    if let Some(header_str) = header_value.as_str() {
+                        let name = HeaderName::from_bytes(k.as_bytes()).unwrap();
+                        let val = HeaderValue::from_str(header_str).unwrap();
+                        output.insert(name, val);
+                    } else {
+                        return Err(anyhow!("Invalid Header {}:{}", k, v));
+                    }
+                }
+                Err(e) => {
+                    return Err(anyhow!("Invalid Header {}:{} ({})", k, v, e));
+                }
+            }
+        } else {
+            let name = HeaderName::from_bytes(k.as_bytes()).unwrap();
+            let val = HeaderValue::from_str(v).unwrap();
+            output.insert(name, val);
+        }
     }
     Ok(output)
 }
@@ -734,8 +767,11 @@ impl RunnableTestStep for TestStep {
 
         let full_url = format!("{}{}", url, path);
 
+        let headers = clean_headers(&self.header_data, config, prior_steps)?;
+
         match client
             .request(self.method.clone(), full_url)
+            .headers(headers)
             .json(&self.request_data)
             .send()
             .await
