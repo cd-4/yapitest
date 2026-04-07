@@ -137,6 +137,51 @@ pub fn get_variable(
     Err(anyhow!("Value not found: {}", name))
 }
 
+pub fn clean_request_data(
+    request_data: &Value,
+    config: &Option<Arc<RwLock<ConfigData>>>,
+    prior_steps: &HashMap<String, TestStepResult>,
+) -> Result<Value> {
+    if let Some(data_map) = request_data.as_object() {
+        let mut new_value = data_map.clone();
+        for (k, v) in data_map.iter() {
+            match clean_request_data(v, config, prior_steps) {
+                Ok(val) => {
+                    new_value.insert(k.clone(), val);
+                }
+                Err(e) => {
+                    return Err(e);
+                }
+            }
+        }
+        Ok(Value::from(new_value))
+    } else if let Some(data_arr) = request_data.as_array() {
+        let mut new_val: Vec<Value> = data_arr.clone();
+        for item in data_arr.iter() {
+            match clean_request_data(item, config, prior_steps) {
+                Ok(val) => {
+                    new_val.push(val);
+                }
+                Err(e) => {
+                    return Err(e);
+                }
+            }
+        }
+        Ok(Value::from(new_val))
+    } else if let Some(data_str) = request_data.as_str() {
+        if data_str.starts_with("$") {
+            match get_variable(data_str.to_string(), config, prior_steps) {
+                Ok(var) => Ok(var),
+                Err(e) => Err(e),
+            }
+        } else {
+            Ok(Value::from(data_str))
+        }
+    } else {
+        Ok(request_data.clone())
+    }
+}
+
 pub fn clean_path(
     path: String,
     config: &Option<Arc<RwLock<ConfigData>>>,
@@ -725,10 +770,14 @@ impl RunnableTestStep for TestStep {
 
         let headers = clean_headers(&self.header_data, config, prior_steps)?;
 
+        println!("Request Data: {}", self.request_data);
+
+        let req_data = clean_request_data(&self.request_data, config, prior_steps)?;
+
         match client
             .request(self.method.clone(), full_url)
             .headers(headers)
-            .json(&self.request_data)
+            .json(&req_data)
             .send()
             .await
         {
