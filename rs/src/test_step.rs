@@ -128,8 +128,35 @@ pub fn get_variable(
                 }
             }
         }
+
+        return Err(anyhow!("Value not found: {}", name));
     }
-    return Err(anyhow!("Value not found: {}", name));
+    Err(anyhow!("Value not found: {}", name))
+}
+
+pub fn clean_path(
+    path: String,
+    config: &Option<Arc<RwLock<ConfigData>>>,
+    prior_steps: &HashMap<String, TestStepResult>,
+) -> Result<String> {
+    let ends_with_slash = path.ends_with("/");
+
+    let mut segments: Vec<String> = vec![];
+
+    for segment in path.split("/") {
+        if segment.starts_with("$") {
+            let new_seg = get_variable(segment.to_string(), config, prior_steps)?;
+            segments.push(new_seg.to_string());
+        } else {
+            segments.push(segment.to_string());
+        }
+    }
+    let mut output = segments.join("/");
+    output = format!("/{}", output);
+    if ends_with_slash {
+        output = format!("{}/", output);
+    }
+    Ok(output)
 }
 
 pub fn clean_data(
@@ -285,10 +312,10 @@ pub fn compare_primitive_values(
             let exp_var = get_variable(exp_str.to_string(), config, prior_steps)?;
             if &exp_var != observed {
                 return Err(anyhow!(
-                    "For key: {} Expected: {} | Value Found {}",
+                    "Value Incorrect for ({}): (Actual:{}, Expected:{})",
                     keys,
-                    exp_var,
                     observed,
+                    exp_var,
                 ));
             }
         }
@@ -304,14 +331,19 @@ pub fn compare_primitive_values(
 
     if observed != expected {
         return Err(anyhow!(
-            "For key: {} Expected: {} | Value Found {}",
+            "Value Incorrect for ({}): (Actual:{}, Expected:{})",
             keys,
+            observed,
             expected,
-            observed
         ));
     }
 
-    Err(anyhow!("Expected: {} | Value Found {}", expected, observed))
+    Err(anyhow!(
+        "Value Incorrect for ({}): (Actual:{}, Expected:{})",
+        keys,
+        observed,
+        expected,
+    ))
 }
 
 pub fn compare_data_inner(
@@ -689,6 +721,15 @@ impl RunnableTestStep for TestStep {
                 }
             }
             None => {}
+        }
+
+        match clean_path(path, config, prior_steps) {
+            Ok(new_path) => {
+                path = new_path;
+            }
+            Err(e) => {
+                return Err(anyhow!("Error generating path: {}", e));
+            }
         }
 
         let full_url = format!("{}{}", url, path);
