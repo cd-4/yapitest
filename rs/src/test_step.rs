@@ -114,9 +114,7 @@ pub fn get_variable(
         for (step_id, step) in prior_steps.iter() {
             let mut new_key: String = step_id.clone();
             new_key.push('.');
-            if new_key.starts_with(&new_key.clone()) {
-                println!("{}", new_key);
-                println!("{}", value_key);
+            if value_key.starts_with(&new_key.clone()) {
                 let trimmed_str = value_key.strip_prefix(&new_key).unwrap();
                 match step.get_field(trimmed_str.to_string()) {
                     Ok(value) => {
