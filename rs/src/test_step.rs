@@ -101,10 +101,13 @@ pub fn get_variable(
         value_key.remove(0);
 
         if let Some(cfg) = config {
-            println!("Getting Config Value: {}", value_key);
             if let Ok(new_val) = cfg.read().unwrap().get_string_value(value_key.clone()) {
                 current_key = new_val;
-                continue 'outer;
+                if current_key.starts_with('$') {
+                    continue 'outer;
+                } else {
+                    return Ok(Value::from(current_key));
+                }
             }
         }
 
