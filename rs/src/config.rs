@@ -314,6 +314,7 @@ impl RunnableTestStep for TestStepGroup {
         config: &Option<Arc<RwLock<ConfigData>>>,
         prior_steps: &HashMap<String, TestStepResult>,
     ) -> Result<TestStepResult> {
+        // Run Steps
         let mut local_steps: HashMap<String, TestStepResult> = HashMap::new();
         for step in self.steps.iter() {
             match step.run(config, prior_steps).await {
@@ -328,6 +329,7 @@ impl RunnableTestStep for TestStepGroup {
             }
         }
 
+        // Process Outputs
         let mut outputs: HashMap<String, serde_json::Value> = HashMap::new();
 
         for (output_key, output_value) in self.outputs.iter() {
@@ -345,6 +347,8 @@ impl RunnableTestStep for TestStepGroup {
                 } else {
                     return Err(anyhow!("Invalid Step Reference: {}", output_value));
                 }
+
+                println!("Getting Output {} {}", output_key, output_value);
 
                 if let Some(step) = local_steps.get(&step_id) {
                     output_sections.remove(0);
