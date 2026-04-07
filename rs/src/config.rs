@@ -348,16 +348,9 @@ impl RunnableTestStep for TestStepGroup {
                     return Err(anyhow!("Invalid Step Reference: {}", output_value));
                 }
 
-                println!("Getting Output {} {}", output_key, output_value);
-
                 if let Some(step) = local_steps.get(&step_id) {
                     output_sections.remove(0);
                     let field_key = output_sections.join(".");
-                    println!("Getting Field in {} ({})", step_id, field_key.clone());
-                    println!(
-                        "\tOutput: {:?}\n\tRequest: {:?}\n\tResponse: {:?}",
-                        step.output_data, step.request_data, step.response_data
-                    );
                     if let Ok(val) = step.get_field(field_key.clone()) {
                         println!("Got Field! {:?}", val);
                         if let Some(yaml_val) = val {

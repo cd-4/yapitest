@@ -774,9 +774,7 @@ impl RunnableTestStep for TestStep {
 
         let headers = clean_headers(&self.header_data, config, prior_steps)?;
 
-        println!("Cleaning Request Data");
         let req_data = clean_request_data(&self.request_data, config, prior_steps)?;
-        println!("Request Data: {}", req_data);
 
         match client
             .request(self.method.clone(), full_url)
