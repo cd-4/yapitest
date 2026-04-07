@@ -331,7 +331,7 @@ impl RunnableTestStep for TestStepGroup {
         let mut outputs: HashMap<String, serde_json::Value> = HashMap::new();
 
         for (output_key, output_value) in self.outputs.iter() {
-            if !output_key.starts_with('$') {
+            if output_key.starts_with('$') {
                 let mut output_str_copy = output_key.clone();
                 output_str_copy.remove(0);
 
