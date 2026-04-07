@@ -817,7 +817,6 @@ impl RunnableTestStep for TestStep {
                                 ));
                             }
                             response_data = Some(actual_response.clone());
-                            println!(">> Response: {}", actual_response.clone());
                         }
                         Err(e) => {
                             let failure_message = format!("Error Decoding Json: {}", e);
