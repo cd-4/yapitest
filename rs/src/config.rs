@@ -76,8 +76,6 @@ impl TestStepGroup {
             outputs: spec.output,
         }
     }
-
-    pub fn from_id(id: String, config: &Option<Arc<RwLock<ConfigData>>>) -> TestStepGroup {}
 }
 
 pub struct ConfigVariable {
@@ -322,13 +320,21 @@ impl RunnableTestStep for TestStepGroup {
                 let mut output_str_copy = output_key.clone();
                 output_str_copy.remove(0);
 
-                let output_sections: Vec<String> =
+                let mut output_sections: Vec<String> =
                     output_str_copy.split('.').map(|v| v.to_string()).collect();
-                let step_id = output_sections.get(0)?;
-                if let Some(step) = local_steps.get(step_id) {
+
+                let mut step_id: String = "".to_string();
+
+                if let Some(step_id_val) = output_sections.get(0) {
+                    step_id = step_id_val.clone();
+                } else {
+                    return Err(anyhow!("Invalid Step Reference: {}", output_value));
+                }
+
+                if let Some(step) = local_steps.get(&step_id) {
                     output_sections.remove(0);
                     let output_key = output_sections.join(".");
-                    if let Ok(val) = step.get_field(output_key) {
+                    if let Ok(val) = step.get_field(output_key.clone()) {
                         if let Some(yaml_val) = val {
                             if let Ok(v) = serde_json::from_value(yaml_val) {
                                 outputs.insert(output_key.clone(), v);
@@ -338,7 +344,7 @@ impl RunnableTestStep for TestStepGroup {
                         return Err(anyhow!(
                             "Field {} not found in step {}",
                             output_key,
-                            step_id
+                            step_id,
                         ));
                     }
                 } else {
