@@ -160,7 +160,6 @@ impl Test {
         let mut prior_steps: HashMap<String, TestStepResult> = HashMap::new();
 
         if let (Some(setup_id), Some(cfg)) = (self.setup.clone(), &self.config) {
-            //println!("Running Setup");
             match cfg.read().unwrap().get_step_group(setup_id.clone()) {
                 Ok(setup) => match setup.run(&self.config, &prior_steps).await {
                     Ok(result) => {
