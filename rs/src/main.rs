@@ -273,7 +273,7 @@ async fn run_tests(tests: &Vec<Test>, threads: Option<u64>) {
         }
 
         for handle in handles {
-            let _ = handle.join();
+            let x = handle.join();
         }
     });
 }
