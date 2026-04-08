@@ -22,16 +22,6 @@ fn is_yaml(path: &PathBuf) -> bool {
     false
 }
 
-fn is_config_file(path: &PathBuf) -> bool {
-    if !is_yaml(path) {
-        return false;
-    }
-    if let Some(stem) = path.file_stem() {
-        return stem == "config" || stem == "yapitest-config";
-    }
-    false
-}
-
 fn is_test_file(path: &PathBuf) -> bool {
     if !is_yaml(path) {
         return false;
@@ -59,31 +49,6 @@ fn is_root_dir(path: &PathBuf) -> bool {
     }
 
     false
-}
-
-fn try_load_file(path: &PathBuf) -> (Vec<Test>, Option<ConfigData>) {
-    /*
-        if is_test_file(path) {
-            // Try Load Test
-            if let Some(basename) = path.file_name() {
-                let (config, tests) = Test::load_test_file(path);
-                //println!("Test: {}", path.display());
-                return (tests, config);
-            }
-        } else if is_config_file(path) {
-            // Try Load Config File
-            if let Some(basename) = path.file_name() {
-                println!("Config: {}", path.display());
-                let new_config = ConfigData::from_file(None, path);
-                if !new_config.is_some() {
-                    println!("CONFIG FAILED TO LOAD");
-                }
-                return (vec![], new_config);
-            }
-        }
-    */
-
-    (vec![], None)
 }
 
 #[derive(Parser, Debug)]
@@ -268,7 +233,7 @@ async fn main() {
                     test_paths.push(p);
                 }
                 Err(e) => {
-                    panic!("Error Unwrapping Path {}", path_arg);
+                    panic!("Error Unwrapping Path {}: {}", path_arg, e);
                 }
             }
         } else {

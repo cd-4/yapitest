@@ -57,13 +57,46 @@ pub struct TestStep {
     allow_missing_fields: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct TestStepResult {
     pub response_data: Option<Value>,
     pub request_data: Option<Value>,
     pub output_data: Option<Value>,
     pub status: TestStepFailureReason,
     pub failure_message: Option<String>,
+}
+
+impl Clone for TestStepResult {
+    fn clone(&self) -> Self {
+        let mut response_data: Option<Value> = None;
+        let mut request_data: Option<Value> = None;
+        let mut output_data: Option<Value> = None;
+        let mut failure_message: Option<String> = None;
+
+        if let Some(x) = &self.response_data {
+            response_data = Some(x.clone());
+        }
+
+        if let Some(x) = &self.request_data {
+            request_data = Some(x.clone());
+        }
+
+        if let Some(x) = &self.output_data {
+            output_data = Some(x.clone());
+        }
+
+        if let Some(x) = &self.failure_message {
+            failure_message = Some(x.clone());
+        }
+
+        TestStepResult {
+            response_data,
+            request_data,
+            output_data,
+            status: self.status,
+            failure_message,
+        }
+    }
 }
 
 pub fn get_variable(
@@ -737,23 +770,17 @@ impl RunnableTestStep for TestStep {
             }
         }
 
-        match url.chars().last() {
-            Some(last_char) => {
-                if last_char == '/' {
-                    url.pop();
-                }
-            }
-            None => {}
+        if let Some(last_char) = url.chars().last()
+            && last_char == '/'
+        {
+            url.pop();
         }
 
         let mut path = self.path.clone();
-        match self.path.chars().next() {
-            Some(first_char) => {
-                if first_char != '/' {
-                    path.insert(0, '/');
-                }
-            }
-            None => {}
+        if let Some(first_char) = self.path.chars().next()
+            && first_char != '/'
+        {
+            path.insert(0, '/');
         }
 
         match clean_path(path, config, prior_steps) {

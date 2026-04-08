@@ -25,7 +25,7 @@ pub struct TestStepGroup {
     steps: Vec<Arc<dyn RunnableTestStep + Send + Sync>>,
     outputs: HashMap<String, String>,
     run_once: bool,
-    path: &PathBuf,
+    path: PathBuf,
 }
 
 pub struct TestStepGroupReference {
@@ -59,7 +59,7 @@ impl TestStepGroup {
             steps,
             run_once: once,
             outputs: spec.output,
-            path,
+            path: path.clone(),
         }
     }
 
@@ -287,7 +287,9 @@ impl RunnableTestStep for TestStepGroup {
     ) -> Result<TestStepResult> {
         let test_group_id = self.get_group_id();
         if self.runs_once() {
+            println!("Maybe Reuse Step");
             if let Some(result) = GROUP_TEST_RESULTS.get(&test_group_id) {
+                println!("REUSING STEP");
                 return Ok(result.clone());
             }
         }
@@ -355,7 +357,7 @@ impl RunnableTestStep for TestStepGroup {
         );
 
         if self.runs_once() {
-            GROUP_TEST_RESULTS.insert(test_group_id, result);
+            GROUP_TEST_RESULTS.insert(test_group_id, result.clone());
         }
 
         return Ok(result);
