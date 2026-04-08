@@ -515,7 +515,7 @@ pub fn compare_primitive_values(
                 } else {
                     return Ok(());
                 }
-            } else if exp_type == "int" && observed.as_i64().is_none() {
+            } else if exp_type == "int" {
                 if observed.as_i64().is_none() {
                     return Err(anyhow!("Expected int for {}", keys));
                 } else {
@@ -537,7 +537,10 @@ pub fn compare_primitive_values(
         }
     }
 
-    if value_type_name(expected) != value_type_name(observed) {
+    let expected_type = value_type_name(expected);
+    let observed_type = value_type_name(observed);
+
+    if observed_type != expected_type {
         return Err(anyhow!(
             "Expected type {} ({}) | Found type {} ({})",
             value_type_name(expected),
