@@ -857,8 +857,9 @@ impl RunnableTestStep for TestStep {
                 }
 
                 let res_text = response.text().await?;
-                //println!("{}", res_text);
+                println!("{}", res_text);
 
+                // Try to decode JSON
                 match serde_json::from_str(&res_text) {
                     //match response.json::<Value>().await {
                     Ok(actual_response) => {
@@ -880,11 +881,13 @@ impl RunnableTestStep for TestStep {
                         response_data = Some(actual_response.clone());
                     }
                     Err(e) => {
-                        let failure_message = format!("Error Decoding Json: {}", e);
-                        return Ok(TestStepResult::make_failure(
-                            TestStepFailureReason::JsonDecodeError,
-                            failure_message,
-                        ));
+                        if self.expected_response_data.is_some() {
+                            let failure_message = format!("Error Decoding Json: {}", e);
+                            return Ok(TestStepResult::make_failure(
+                                TestStepFailureReason::JsonDecodeError,
+                                failure_message,
+                            ));
+                        }
                     }
                 }
             }
