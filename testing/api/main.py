@@ -144,6 +144,7 @@ def user():
 
 @app.route("/api/user/<username>", methods=["GET"])
 def get_user(username):
+    print(username)
     user = USERS_BY_USERNAME[username]
     output = user.full_json()
     return output

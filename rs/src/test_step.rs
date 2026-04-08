@@ -118,12 +118,9 @@ pub fn get_variable(
             .map(|v| v.to_string())
             .collect();
 
-        println!("KEY: {}", current_key);
-
         if let Some(step) = segments.first().and_then(|v| prior_steps.get(v)) {
             segments.remove(0);
             let field_key = segments.join(".");
-            println!("Found Step {}", field_key);
             match step.get_field(field_key.clone()) {
                 Ok(field_val) => {
                     if let Some(val) = field_val {
@@ -206,16 +203,22 @@ pub fn clean_path(
     for segment in path.split("/") {
         if segment.starts_with("$") {
             let new_seg = get_variable(segment.to_string(), config, prior_steps)?;
-            segments.push(new_seg.to_string());
+            if let Some(seg_str) = new_seg.as_str() {
+                segments.push(seg_str.to_string());
+            } else {
+                return Err(anyhow!("Variable {} not of type string", segment));
+            }
         } else {
+            println!("Segment2: {}", segment.to_string());
             segments.push(segment.to_string());
         }
     }
     let mut output = segments.join("/");
-    output = format!("/{}", output);
+    output.insert(0, '/');
     if ends_with_slash {
-        output = format!("{}/", output);
+        output.push('/');
     }
+    println!("PATH OUT: {}", output);
     Ok(output)
 }
 
@@ -809,6 +812,9 @@ impl RunnableTestStep for TestStep {
         let req_data = clean_request_data(&self.request_data, config, prior_steps)?;
         let mut response_data: Option<Value> = None;
 
+        println!("REQUEST DATA:\n{}", req_data);
+        println!("URL: {}", full_url);
+
         match client
             .request(self.method.clone(), full_url)
             .headers(headers)
@@ -832,7 +838,11 @@ impl RunnableTestStep for TestStep {
                     }
                 }
 
-                match response.json::<Value>().await {
+                let res_text = response.text().await?;
+                //println!("{}", res_text);
+
+                match serde_json::from_str(&res_text) {
+                    //match response.json::<Value>().await {
                     Ok(actual_response) => {
                         if let Some(expected_response) = self.expected_response_data.clone() {
                             if let Err(e) = compare_data(
