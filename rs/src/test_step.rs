@@ -121,9 +121,9 @@ pub fn get_variable(
         println!("KEY: {}", current_key);
 
         if let Some(step) = segments.first().and_then(|v| prior_steps.get(v)) {
-            println!("Found Step");
             segments.remove(0);
             let field_key = segments.join(".");
+            println!("Found Step {}", field_key);
             match step.get_field(field_key.clone()) {
                 Ok(field_val) => {
                     if let Some(val) = field_val {
@@ -482,7 +482,9 @@ pub fn compare_primitive_values(
                 }
             }
         } else if exp_str.starts_with("$") {
+            println!("==== GEtTING EXPECTED ====");
             let exp_var = get_variable(exp_str.to_string(), config, prior_steps)?;
+            println!("Expected {}", exp_var);
             if &exp_var != observed {
                 return Err(anyhow!(
                     "Value Incorrect for ({}): (Actual:{}, Expected:{})",
@@ -602,15 +604,20 @@ impl TestStepResult {
                 }
                 first = false;
             } else {
+                println!("{}, ret_val {:?}", section, return_value.clone());
                 if let Some(new_val) = return_value.clone() {
+                    println!("Is Some");
                     if let Some(obj_val) = new_val.as_object() {
+                        println!("Is Obj");
                         if let Some(new) = obj_val.get(*section) {
+                            println!("Got Val {}", new.clone());
                             return_value = Some(new.clone());
                         }
                     }
                 }
             }
         }
+        println!("Returning {:?}", return_value.clone());
         Ok(return_value.clone())
     }
 }
