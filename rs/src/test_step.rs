@@ -209,7 +209,6 @@ pub fn clean_path(
                 return Err(anyhow!("Variable {} not of type string", segment));
             }
         } else {
-            println!("Segment2: {}", segment.to_string());
             segments.push(segment.to_string());
         }
     }
@@ -218,7 +217,6 @@ pub fn clean_path(
     if ends_with_slash {
         output.push('/');
     }
-    println!("PATH OUT: {}", output);
     Ok(output)
 }
 
@@ -831,9 +829,6 @@ impl RunnableTestStep for TestStep {
 
         let req_data = clean_request_data(&self.request_data, config, prior_steps)?;
         let mut response_data: Option<Value> = None;
-
-        println!("REQUEST DATA:\n{}", req_data);
-        println!("URL: {}", full_url);
 
         match client
             .request(self.method.clone(), full_url)
