@@ -205,6 +205,8 @@ pub fn clean_path(
             let new_seg = get_variable(segment.to_string(), config, prior_steps)?;
             if let Some(seg_str) = new_seg.as_str() {
                 segments.push(seg_str.to_string());
+            } else if let Some(seg_int) = new_seg.as_i64() {
+                segments.push(format!("{}", seg_int));
             } else {
                 return Err(anyhow!("Variable {} not of type string", segment));
             }
