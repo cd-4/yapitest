@@ -454,6 +454,24 @@ pub fn compare_array_objects(
     Ok(())
 }
 
+fn value_type_name(v: &Value) -> &'static str {
+    if v.is_null() {
+        "Null"
+    } else if v.is_boolean() {
+        "Bool"
+    } else if v.is_number() {
+        "Number"
+    } else if v.is_string() {
+        "String"
+    } else if v.is_array() {
+        "Array"
+    } else if v.is_object() {
+        "Object"
+    } else {
+        "Unknown" // should never happen
+    }
+}
+
 fn value_eq(a: &Value, b: &Value) -> bool {
     match (a, b) {
         // Same type → normal comparison
@@ -521,11 +539,11 @@ pub fn compare_primitive_values(
         }
     }
 
-    if discriminant(expected) != discriminant(observed) {
+    if value_type_name(expected) != value_type_name(observed) {
         return Err(anyhow!(
-            "Expected type {:?} | Found type {:?}",
-            expected.type_id(),
-            observed.type_id()
+            "Expected type {} | Found type {}",
+            value_type_name(expected),
+            value_type_name(observed),
         ));
     }
 
