@@ -182,7 +182,6 @@ impl Test {
             match cfg.read().unwrap().get_step_group(setup_id.clone()) {
                 Ok(setup) => match setup.run(&self.config, &prior_steps).await {
                     Ok(result) => {
-                        println!("Adding Setup To Steps");
                         prior_steps.insert("setup".to_string(), result);
                     }
                     Err(e) => {

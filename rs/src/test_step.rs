@@ -482,9 +482,7 @@ pub fn compare_primitive_values(
                 }
             }
         } else if exp_str.starts_with("$") {
-            println!("==== GEtTING EXPECTED ====");
             let exp_var = get_variable(exp_str.to_string(), config, prior_steps)?;
-            println!("Expected {}", exp_var);
             if &exp_var != observed {
                 return Err(anyhow!(
                     "Value Incorrect for ({}): (Actual:{}, Expected:{})",
@@ -492,6 +490,8 @@ pub fn compare_primitive_values(
                     observed,
                     exp_var,
                 ));
+            } else {
+                return Ok(());
             }
         }
     }
@@ -604,20 +604,15 @@ impl TestStepResult {
                 }
                 first = false;
             } else {
-                println!("{}, ret_val {:?}", section, return_value.clone());
                 if let Some(new_val) = return_value.clone() {
-                    println!("Is Some");
                     if let Some(obj_val) = new_val.as_object() {
-                        println!("Is Obj");
                         if let Some(new) = obj_val.get(*section) {
-                            println!("Got Val {}", new.clone());
                             return_value = Some(new.clone());
                         }
                     }
                 }
             }
         }
-        println!("Returning {:?}", return_value.clone());
         Ok(return_value.clone())
     }
 }
