@@ -10,6 +10,7 @@ use serde_json::{Map, Value};
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
+use std::fs::write;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 
@@ -111,27 +112,34 @@ pub fn get_variable(
             }
         }
 
-        for (step_id, step) in prior_steps.iter() {
-            let mut new_key: String = step_id.clone();
-            new_key.push('.');
-            if value_key.starts_with(&new_key.clone()) {
-                let trimmed_str = value_key.strip_prefix(&new_key).unwrap();
-                match step.get_field(trimmed_str.to_string()) {
-                    Ok(value) => {
-                        if let Some(v) = value {
-                            if let Some(string_val) = v.as_str() {
-                                if string_val.starts_with('$') {
-                                    continue 'outer;
-                                }
+        let mut segments: Vec<String> = value_key
+            .clone()
+            .split('.')
+            .map(|v| v.to_string())
+            .collect();
+
+        println!("KEY: {}", current_key);
+
+        if let Some(step) = segments.first().and_then(|v| prior_steps.get(v)) {
+            println!("Found Step");
+            segments.remove(0);
+            let field_key = segments.join(".");
+            match step.get_field(field_key.clone()) {
+                Ok(field_val) => {
+                    if let Some(val) = field_val {
+                        if let Some(value_str) = val.as_str() {
+                            if value_str.starts_with("$") {
+                                current_key = value_str.to_string();
+                                continue 'outer;
                             }
-                            return Ok(v);
-                        } else {
-                            return Err(anyhow!("1 Value not found: {}", name));
                         }
+                        return Ok(val);
+                    } else {
+                        return Err(anyhow!("Value {} not found", field_key));
                     }
-                    Err(e) => {
-                        return Err(e);
-                    }
+                }
+                Err(e) => {
+                    return Err(anyhow!("Value {} not found", field_key));
                 }
             }
         }
