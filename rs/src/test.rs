@@ -12,6 +12,7 @@ use crate::test_step::{
     RunnableTestStep, TestStep, TestStepFailureReason, TestStepResult, TestStepSpec,
 };
 
+#[derive(Clone)]
 pub struct Test {
     pub name: String,
     path: PathBuf,
@@ -19,7 +20,7 @@ pub struct Test {
     pub groups: Option<Vec<String>>,
     setup: Option<String>,
     teardown: Option<String>,
-    steps: Vec<Arc<RwLock<dyn RunnableTestStep>>>,
+    steps: Vec<Arc<RwLock<dyn RunnableTestStep + Send + Sync>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,7 +74,7 @@ impl Test {
             config = Some(Arc::new(RwLock::new(loaded_config)));
         }
 
-        let mut test_steps: Vec<Arc<RwLock<dyn RunnableTestStep>>> = vec![];
+        let mut test_steps: Vec<Arc<RwLock<dyn RunnableTestStep + Send + Sync>>> = vec![];
 
         for step in spec.steps.into_iter() {
             match from_value::<TestStepSpec>(step.clone()) {

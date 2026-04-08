@@ -6,6 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock};
+use std::thread;
 use walkdir::WalkDir;
 
 mod config;
@@ -215,11 +216,66 @@ fn load_tests(
     }
 }
 
-async fn run_tests(tests: &Vec<Test>, threads: Option<u64>) {
+async fn run_tests_thread(tests: &Vec<Test>) {
     for test in tests.iter() {
         println!("-----------------------------");
         let _x = test.run().await;
     }
+}
+
+async fn run_tests(tests: &Vec<Test>, threads: Option<u64>) {
+    /*
+        let mut num_threads: u64 = 1;
+        if let Some(t) = threads {
+            num_threads = t;
+        }
+
+        if num_threads == 1 {
+            run_tests_thread(tests).await;
+        } else {
+            let chunk_size = (tests.len() as u64).div_ceil(num_threads);
+            let test_groups: Vec<&[Test]> = tests.chunks(chunk_size as usize).collect();
+            let mut threads = vec![];
+            for group in test_groups.iter() {
+                let handle = thread::spawn(|| {
+                    let tests_vec = group.to_vec();
+                    run_tests_thread(&tests_vec);
+                });
+                threads.push(handle);
+            }
+
+            for handle in threads.iter() {
+                handle.join();
+            }
+        }
+    */
+    let num_threads = threads.unwrap_or(1);
+
+    if num_threads == 1 {
+        run_tests_thread(tests).await;
+        return;
+    }
+
+    let chunk_size = (tests.len() as u64).div_ceil(num_threads);
+    let test_groups: Vec<&[Test]> = tests.chunks(chunk_size as usize).collect();
+
+    thread::scope(|s| {
+        let mut handles = vec![];
+
+        for group in &test_groups {
+            let handle = s.spawn(|| {
+                let tests_vec = group.to_vec(); // owned copy per thread
+                // Note: if run_tests_thread is async, you'll need to block_on it
+                // or make a synchronous version.
+                run_tests_thread(&tests_vec); // or block_on(...) if needed
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            let _ = handle.join();
+        }
+    });
 }
 
 #[tokio::main]
