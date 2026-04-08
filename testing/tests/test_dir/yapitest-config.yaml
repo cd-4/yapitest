@@ -1,6 +1,7 @@
 
 step-sets:
   create-user:
+    once: true
     steps:
       - id: create-user
         path: /api/user/create

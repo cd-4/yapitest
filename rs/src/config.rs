@@ -287,9 +287,7 @@ impl RunnableTestStep for TestStepGroup {
     ) -> Result<TestStepResult> {
         let test_group_id = self.get_group_id();
         if self.runs_once() {
-            println!("Maybe Reuse Step");
             if let Some(result) = GROUP_TEST_RESULTS.get(&test_group_id) {
-                println!("REUSING STEP");
                 return Ok(result.clone());
             }
         }
