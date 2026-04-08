@@ -541,9 +541,11 @@ pub fn compare_primitive_values(
 
     if value_type_name(expected) != value_type_name(observed) {
         return Err(anyhow!(
-            "Expected type {} | Found type {}",
+            "Expected type {} ({}) | Found type {} ({})",
             value_type_name(expected),
+            expected,
             value_type_name(observed),
+            observed,
         ));
     }
 
