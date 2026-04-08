@@ -369,7 +369,9 @@ pub fn compare_data_objects(
                             ));
                         }
                     }
-                    Err(e) => {}
+                    Err(e) => {
+                        return Err(anyhow!("Error checking size for {}.{}", keys, key));
+                    }
                 }
             } else if full {
                 return Err(anyhow!(
@@ -755,20 +757,17 @@ impl RunnableTestStep for TestStep {
     ) -> Result<TestStepResult> {
         let client = Client::new();
 
-        let mut url: String = "".to_string();
-
-        match self.get_url(config) {
-            Ok(actual_url) => {
-                url = actual_url;
-            }
-            Err(e) => {
+        // let mut url: String = "".to_string();
+        let mut url = match self.get_url(config) {
+            Ok(actual_url) => actual_url,
+            Err(_) => {
                 let identifier = self.get_identifier(prior_steps.len());
                 return Ok(TestStepResult::make_failure(
                     TestStepFailureReason::ConfigurationError,
                     format!("No url specified for step {}", identifier),
                 ));
             }
-        }
+        };
 
         if let Some(last_char) = url.chars().last()
             && last_char == '/'
