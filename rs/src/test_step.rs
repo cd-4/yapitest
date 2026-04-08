@@ -16,7 +16,7 @@ use std::sync::{Arc, RwLock};
 
 use std::mem::discriminant;
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum TestStepFailureReason {
     NoFailure,
     ResponseError,
@@ -57,6 +57,7 @@ pub struct TestStep {
     allow_missing_fields: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct TestStepResult {
     pub response_data: Option<Value>,
     pub request_data: Option<Value>,

@@ -287,8 +287,8 @@ impl RunnableTestStep for TestStepGroup {
     ) -> Result<TestStepResult> {
         let test_group_id = self.get_group_id();
         if self.runs_once() {
-            if let result = GROUP_TEST_RESULTS.get(&test_group_id) {
-                return Ok(result);
+            if let Some(result) = GROUP_TEST_RESULTS.get(&test_group_id) {
+                return Ok(result.clone());
             }
         }
 
@@ -348,10 +348,16 @@ impl RunnableTestStep for TestStepGroup {
             }
         }
 
-        return Ok(TestStepResult::make_success(
+        let result = TestStepResult::make_success(
             serde_yaml::from_value(Value::Null)?,
             serde_yaml::from_value(Value::Null)?,
             serde_json::to_value(outputs)?,
-        ));
+        );
+
+        if self.runs_once() {
+            GROUP_TEST_RESULTS.insert(test_group_id, result);
+        }
+
+        return Ok(result);
     }
 }
