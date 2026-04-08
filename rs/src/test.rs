@@ -154,7 +154,7 @@ impl Test {
         Ok((config, tests))
     }
 
-    pub async fn run(&mut self) {
+    pub async fn run(&self) {
         //println!("Running Test: {}", self.name);
 
         let mut prior_steps: HashMap<String, TestStepResult> = HashMap::new();
@@ -177,7 +177,7 @@ impl Test {
             }
         }
 
-        for step in self.steps.iter_mut() {
+        for step in self.steps.iter() {
             let real_step = step.read().unwrap();
             // println!("Running Step");
             match real_step.run(&self.config, &prior_steps).await {
