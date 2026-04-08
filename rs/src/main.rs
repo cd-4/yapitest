@@ -64,6 +64,9 @@ struct Args {
 
     #[arg(short = 'i', action = ArgAction::Append)]
     include: Vec<String>,
+
+    #[arg(short = 't')]
+    threads: Option<u64>,
 }
 
 fn get_config_in_dir(path: &PathBuf) -> Result<Option<ConfigData>> {
@@ -212,7 +215,7 @@ fn load_tests(
     }
 }
 
-async fn run_tests(tests: &mut Vec<Test>) {
+async fn run_tests(tests: &Vec<Test>, threads: Option<u64>) {
     for test in tests.iter() {
         println!("-----------------------------");
         let _x = test.run().await;
@@ -291,5 +294,5 @@ async fn main() {
     }
 
     println!("Collected {} Tests", tests.len());
-    run_tests(&mut tests).await;
+    run_tests(&tests, args.threads).await;
 }
