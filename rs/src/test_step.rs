@@ -451,6 +451,28 @@ pub fn compare_array_objects(
     Ok(())
 }
 
+fn value_eq(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        // Same type → normal comparison
+        (Value::Null, Value::Null) => true,
+        (Value::Bool(x), Value::Bool(y)) => x == y,
+        (Value::Number(x), Value::Number(y)) => x == y,
+        (Value::String(x), Value::String(y)) => x == y,
+        (Value::Array(x), Value::Array(y)) => {
+            x.len() == y.len() && x.iter().zip(y.iter()).all(|(xa, ya)| value_eq(xa, ya))
+        }
+        (Value::Object(x), Value::Object(y)) => {
+            if x.len() != y.len() {
+                return false;
+            }
+            x.iter()
+                .all(|(k, v)| y.get(k).map_or(false, |yv| value_eq(v, yv)))
+        }
+
+        _ => false,
+    }
+}
+
 pub fn compare_primitive_values(
     observed: &Value,
     expected: &Value,
@@ -483,9 +505,9 @@ pub fn compare_primitive_values(
             }
         } else if exp_str.starts_with("$") {
             let exp_var = get_variable(exp_str.to_string(), config, prior_steps)?;
-            if &exp_var != observed {
+            if !value_eq(&exp_var, observed) {
                 return Err(anyhow!(
-                    "Value Incorrect for ({}): (Actual:{}, Expected:{})",
+                    "Value Incorrect for ({}) 1: (Actual:{}, Expected:{})",
                     keys,
                     observed,
                     exp_var,
@@ -504,21 +526,16 @@ pub fn compare_primitive_values(
         ));
     }
 
-    if observed != expected {
-        return Err(anyhow!(
-            "Value Incorrect for ({}): (Actual:{}, Expected:{})",
+    if !value_eq(observed, expected) {
+        Err(anyhow!(
+            "Value Incorrect for ({}) 2: (Actual:{}, Expected:{})",
             keys,
             observed,
             expected,
-        ));
+        ))
+    } else {
+        Ok(())
     }
-
-    Err(anyhow!(
-        "Value Incorrect for ({}): (Actual:{}, Expected:{})",
-        keys,
-        observed,
-        expected,
-    ))
 }
 
 pub fn compare_data_inner(
