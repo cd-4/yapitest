@@ -5,11 +5,11 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
 use crate::config::{ConfigData, ConfigSpec, TestStepGroupReference};
 use crate::test_step::{
-    RunnableTestStep, TestStep, TestStepFailureReason, TestStepResult, TestStepSpec, TestStepStatus,
+    RunnableTestStep, TestStep, TestStepFailureReason, TestStepResult, TestStepSpec,
 };
 
 pub struct Test {
@@ -64,22 +64,6 @@ impl Test {
                 self.config = Some(Arc::clone(&config));
             }
         }
-    }
-
-    pub fn has_config(&self) -> bool {
-        self.config.is_some()
-    }
-
-    pub fn set_config(&mut self, config: Arc<RwLock<ConfigData>>) {
-        match &self.config {
-            Some(cfg) => {
-                cfg.write().unwrap().set_parent(Arc::clone(&config));
-            }
-            None => {
-                self.config = Some(Arc::clone(&config));
-            }
-        }
-        self.config = Some(config);
     }
 
     pub fn from_spec(path: PathBuf, name: String, spec: TestSpec) -> Result<Test> {
@@ -171,14 +155,12 @@ impl Test {
     }
 
     pub async fn run(&mut self) {
-        println!("Running Test: {}", self.name);
-        //config: &Option<Arc<RwLock<ConfigData>>>,
-        //prior_steps: &HashMap<String, TestStepResult>,
+        //println!("Running Test: {}", self.name);
 
         let mut prior_steps: HashMap<String, TestStepResult> = HashMap::new();
 
         if let (Some(setup_id), Some(cfg)) = (self.setup.clone(), &self.config) {
-            println!("Running Setup");
+            //println!("Running Setup");
             match cfg.read().unwrap().get_step_group(setup_id.clone()) {
                 Ok(setup) => match setup.run(&self.config, &prior_steps).await {
                     Ok(result) => {
@@ -198,7 +180,7 @@ impl Test {
 
         for step in self.steps.iter_mut() {
             let real_step = step.read().unwrap();
-            println!("Running Step");
+            // println!("Running Step");
             match real_step.run(&self.config, &prior_steps).await {
                 Ok(result) => {
                     if result.status != TestStepFailureReason::NoFailure {
@@ -210,7 +192,7 @@ impl Test {
                         if let Some(id) = real_step.get_id() {
                             prior_steps.insert(id.clone(), result);
                         }
-                        println!("Success");
+                        //println!("Success");
                     }
                 }
                 Err(e) => {
@@ -219,6 +201,25 @@ impl Test {
                 }
             }
             //step.run();
+        }
+
+        if let (Some(teardown_id), Some(cfg)) = (self.teardown.clone(), &self.config) {
+            //println!("Running Setup");
+            match cfg.read().unwrap().get_step_group(teardown_id.clone()) {
+                Ok(teardown) => match teardown.run(&self.config, &prior_steps).await {
+                    Ok(result) => {
+                        prior_steps.insert("teardown".to_string(), result);
+                    }
+                    Err(e) => {
+                        eprintln!("Test Teardown Failed: {}", e);
+                        panic!("ER");
+                    }
+                },
+                Err(e) => {
+                    eprintln!("Error finding setup: {}", teardown_id.clone());
+                    panic!("ER");
+                }
+            }
         }
     }
 }

@@ -19,19 +19,10 @@ use std::mem::discriminant;
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum TestStepFailureReason {
     NoFailure,
-    NoResponse,
     ResponseError,
     StatusCodeError,
     JsonDecodeError,
     ConfigurationError,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum TestStepStatus {
-    NotRun,
-    InProgress,
-    Pass,
-    Fail,
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,18 +43,6 @@ pub struct TestStepSpec {
     headers: Option<HashMap<String, String>>,
     data: Option<Value>,
     assert: Option<TestStepAssertionSpec>,
-    output: Option<HashMap<String, String>>,
-}
-
-impl Display for TestStepStatus {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match self {
-            TestStepStatus::Pass => write!(f, "Pass"),
-            TestStepStatus::InProgress => write!(f, "In Progress"),
-            TestStepStatus::Fail => write!(f, "Fail"),
-            TestStepStatus::NotRun => write!(f, "Not Run"),
-        }
-    }
 }
 
 pub struct TestStep {
@@ -76,8 +55,6 @@ pub struct TestStep {
     expected_response_data: Option<Value>,
     expected_status_code: Option<Value>,
     allow_missing_fields: bool,
-    status: TestStepStatus,
-    failure_reason: TestStepFailureReason,
 }
 
 pub struct TestStepResult {
@@ -251,44 +228,6 @@ pub fn clean_headers(
         }
     }
     Ok(output)
-}
-
-pub fn clean_data(
-    value: &Value,
-    config: &Option<Arc<RwLock<ConfigData>>>,
-    prior_steps: &HashMap<String, TestStepResult>,
-) -> Result<Value> {
-    if let Some(map) = value.clone().as_object_mut() {
-        for (key, val) in map.clone().iter_mut() {
-            match clean_data(val, config, prior_steps) {
-                Ok(cleaned) => {
-                    map.insert(key.clone(), cleaned);
-                }
-                Err(e) => {
-                    return Err(e);
-                }
-            }
-        }
-        return Ok(Value::from(map.clone()));
-    } else if let Some(vec) = value.clone().as_array_mut() {
-        let mut cleaned_vec: Vec<Value> = Vec::with_capacity(vec.len());
-
-        for item in vec.iter_mut() {
-            match clean_data(item, config, prior_steps) {
-                Ok(cleaned) => {
-                    cleaned_vec.push(cleaned);
-                }
-                Err(e) => {
-                    return Err(e);
-                }
-            }
-        }
-        return Ok(Value::Array(cleaned_vec));
-    } else if let Some(str) = value.as_str() {
-        return get_variable(str.to_string(), config, prior_steps);
-    }
-
-    return Ok(value.clone());
 }
 
 #[derive(Debug, PartialEq)]
@@ -755,8 +694,6 @@ impl TestStep {
             expected_response_data,
             expected_status_code,
             allow_missing_fields: !full_data,
-            status: TestStepStatus::NotRun,
-            failure_reason: TestStepFailureReason::NoFailure,
         }
     }
 }
@@ -769,7 +706,6 @@ pub trait RunnableTestStep {
         config: &Option<Arc<RwLock<ConfigData>>>,
         prior_steps: &HashMap<String, TestStepResult>,
     ) -> Result<TestStepResult>;
-    fn get_status(&self) -> TestStepStatus;
 }
 
 #[async_trait]
@@ -859,7 +795,8 @@ impl RunnableTestStep for TestStep {
                 }
 
                 let res_text = response.text().await?;
-                println!("{}", res_text);
+                // For debugging
+                // println!("{}", res_text);
 
                 // Try to decode JSON
                 match serde_json::from_str(&res_text) {
@@ -904,9 +841,5 @@ impl RunnableTestStep for TestStep {
             response_data,
             output_data: None,
         });
-    }
-
-    fn get_status(&self) -> TestStepStatus {
-        self.status
     }
 }

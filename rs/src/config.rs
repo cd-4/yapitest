@@ -1,6 +1,7 @@
-use crate::test_step::{RunnableTestStep, TestStep, TestStepResult, TestStepSpec, TestStepStatus};
+use crate::test_step::{RunnableTestStep, TestStep, TestStepResult, TestStepSpec};
 use anyhow::{Error, Result, anyhow};
 use async_trait::async_trait;
+use dashmap::DashMap;
 use serde::Deserialize;
 use serde_yaml::{Value, from_value};
 use std::collections::HashMap;
@@ -8,7 +9,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, LazyLock, RwLock};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -20,36 +21,21 @@ pub struct TestStepGroupSpec {
 
 #[derive(Clone)]
 pub struct TestStepGroup {
-    id: Option<String>,
+    id: String,
     steps: Vec<Arc<dyn RunnableTestStep + Send + Sync>>,
-    status: TestStepStatus,
     outputs: HashMap<String, String>,
     run_once: bool,
-    has_run: bool,
+    path: &PathBuf,
 }
 
 pub struct TestStepGroupReference {
     id: String,
-    status: TestStepStatus,
 }
 
-pub fn get_depth(key_vec: Vec<String>, value: Value) -> Result<Value> {
-    let mut cur_val = &value;
-    for key in key_vec.iter() {
-        match cur_val.get(key) {
-            Some(val) => {
-                cur_val = val;
-            }
-            None => {
-                return Err(anyhow!("{} not found", key_vec.join(".")));
-            }
-        }
-    }
-    Ok(cur_val.clone())
-}
+static GROUP_TEST_RESULTS: LazyLock<DashMap<String, TestStepResult>> = LazyLock::new(DashMap::new);
 
 impl TestStepGroup {
-    pub fn from_spec(id: String, spec: TestStepGroupSpec) -> TestStepGroup {
+    pub fn from_spec(id: String, spec: TestStepGroupSpec, path: &PathBuf) -> TestStepGroup {
         let mut once = false;
         if let Some(run_once) = spec.once
             && run_once
@@ -69,19 +55,21 @@ impl TestStepGroup {
         }
 
         TestStepGroup {
-            id: Some(id),
+            id,
             steps,
-            status: TestStepStatus::NotRun,
             run_once: once,
-            has_run: false,
             outputs: spec.output,
+            path,
         }
     }
-}
 
-pub struct ConfigVariable {
-    value: Option<String>,
-    env_var_name: Option<String>,
+    pub fn runs_once(&self) -> bool {
+        return self.run_once;
+    }
+
+    pub fn get_group_id(&self) -> String {
+        return format!("{}:{}", self.path.display(), self.id);
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -192,7 +180,7 @@ impl ConfigData {
             step_sets = Some(
                 step_set_specs
                     .into_iter()
-                    .map(|(k, v)| (k.clone(), TestStepGroup::from_spec(k.clone(), v)))
+                    .map(|(k, v)| (k.clone(), TestStepGroup::from_spec(k.clone(), v, path)))
                     .collect(),
             )
         }
@@ -238,16 +226,6 @@ impl ConfigData {
         }
     }
 
-    pub fn spec_from_value(value: Value) -> Option<ConfigSpec> {
-        match from_value::<ConfigSpec>(value.clone()) {
-            Ok(config_spec) => Some(config_spec),
-            Err(e) => {
-                eprintln!("Error Loading Config: {}", e);
-                None
-            }
-        }
-    }
-
     pub fn spec_from_file(path: &PathBuf) -> Result<ConfigSpec> {
         if let Ok(file) = File::open(path) {
             let reader = BufReader::new(file);
@@ -277,10 +255,7 @@ impl ConfigData {
 
 impl TestStepGroupReference {
     pub fn from_id(id: String) -> TestStepGroupReference {
-        TestStepGroupReference {
-            id,
-            status: TestStepStatus::NotRun,
-        }
+        TestStepGroupReference { id }
     }
 }
 
@@ -297,16 +272,12 @@ impl RunnableTestStep for TestStepGroupReference {
     ) -> Result<TestStepResult> {
         Err(anyhow!("SDF"))
     }
-
-    fn get_status(&self) -> TestStepStatus {
-        self.status
-    }
 }
 
 #[async_trait]
 impl RunnableTestStep for TestStepGroup {
     fn get_id(&self) -> Option<&String> {
-        self.id.as_ref()
+        Some(&self.id)
     }
 
     async fn run(
@@ -314,6 +285,13 @@ impl RunnableTestStep for TestStepGroup {
         config: &Option<Arc<RwLock<ConfigData>>>,
         prior_steps: &HashMap<String, TestStepResult>,
     ) -> Result<TestStepResult> {
+        let test_group_id = self.get_group_id();
+        if self.runs_once() {
+            if let result = GROUP_TEST_RESULTS.get(&test_group_id) {
+                return Ok(result);
+            }
+        }
+
         // Run Steps
         let mut local_steps: HashMap<String, TestStepResult> = HashMap::new();
         for step in self.steps.iter() {
@@ -375,9 +353,5 @@ impl RunnableTestStep for TestStepGroup {
             serde_yaml::from_value(Value::Null)?,
             serde_json::to_value(outputs)?,
         ));
-    }
-
-    fn get_status(&self) -> TestStepStatus {
-        self.status
     }
 }
