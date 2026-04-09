@@ -355,5 +355,5 @@ async fn main() {
         .duration_since(start_time)
         .expect("Time went backwards")
         .as_secs_f32();
-    println!("Ran tests in {} seconds", duration);
+    println!("Ran {} tests in {} seconds", tests.len(), duration);
 }
