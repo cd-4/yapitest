@@ -50,7 +50,7 @@ pub fn print_test_results(test_results: &Vec<TestResult>) {
 
     let percent_pass = 100.0 * (num_passes as f64) / (total_tests as f64);
     if num_failures == 0 {
-        println!("✅ All {} tests passed (100%)", total_tests,);
+        println!("✔️ All {} tests passed (100%)", total_tests,);
     } else {
         println!(
             "{}/{} of tests passed ({:.2}%)",
@@ -58,6 +58,7 @@ pub fn print_test_results(test_results: &Vec<TestResult>) {
         );
     }
 
+    // ❌
     for failure in fails.iter() {
         println!(
             "{} Failed ({})",
