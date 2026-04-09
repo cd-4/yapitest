@@ -8,6 +8,7 @@ use std::rc::Rc;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
+use std::time::{Instant, SystemTime};
 use tokio::runtime::Runtime; // or use Handle if you already have a runtime
 use walkdir::WalkDir;
 
@@ -229,7 +230,11 @@ async fn run_tests_thread(tests: &Vec<Test>) -> Vec<TestResult> {
     output
 }
 
-fn print_test_results(results: &Vec<TestResult>) {}
+fn print_test_results(results: &Vec<TestResult>) {
+    for test in results.iter() {
+        //if test.su
+    }
+}
 
 async fn run_tests(tests: &Vec<Test>, threads: Option<u64>) -> Vec<TestResult> {
     let num_threads = threads.unwrap_or(1);
@@ -271,6 +276,8 @@ async fn run_tests(tests: &Vec<Test>, threads: Option<u64>) -> Vec<TestResult> {
 
 #[tokio::main]
 async fn main() {
+    let start_time = SystemTime::now();
+
     let args = Args::parse();
 
     let mut test_paths: Vec<PathBuf> = Vec::new();
@@ -343,4 +350,10 @@ async fn main() {
     println!("Collected {} Tests", tests.len());
     let test_results = run_tests(&tests, args.threads).await;
     print_test_results(&test_results);
+    let end_time = SystemTime::now();
+    let duration = end_time
+        .duration_since(start_time)
+        .expect("Time went backwards")
+        .as_secs_f32();
+    println!("Ran tests in {} seconds", duration);
 }
