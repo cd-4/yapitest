@@ -5,6 +5,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use tokio::runtime::Runtime; // or use Handle if you already have a runtime
@@ -228,45 +229,42 @@ async fn run_tests_thread(tests: &Vec<Test>) -> Vec<TestResult> {
     output
 }
 
-async fn run_tests(tests: &Vec<Test>, threads: Option<u64>) {
+async fn run_tests(tests: &Vec<Test>, threads: Option<u64>) -> Vec<TestResult> {
     let num_threads = threads.unwrap_or(1);
 
     if num_threads == 1 {
-        run_tests_thread(tests).await;
-        return;
+        return run_tests_thread(tests).await;
     }
 
     let chunk_size = (tests.len() as u64).div_ceil(num_threads);
     let test_groups: Vec<&[Test]> = tests.chunks(chunk_size as usize).collect();
 
+    let (tx, rx) = mpsc::channel::<Vec<TestResult>>();
+
     thread::scope(|s| {
-        let mut handles = vec![];
-
         for group in test_groups {
-            // Clone or move what you need into the thread
-            let group_owned = group.to_vec(); // or use Arc if you can avoid cloning
+            let group_owned = group.to_vec();
+            let tx_clone = tx.clone();
 
-            let handle = s.spawn(move || {
-                // === Create a fresh runtime per thread (safest and simplest) ===
-                let rt = Runtime::new().expect("Failed to create Tokio runtime in worker thread");
+            s.spawn(move || {
+                let rt = Runtime::new().expect("Failed to create runtime");
 
-                // Run the async test group to completion
-                rt.block_on(async {
-                    run_tests_thread(&group_owned).await;
-                });
+                let group_results = rt.block_on(async { run_tests_thread(&group_owned).await });
+
+                let _ = tx_clone.send(group_results);
             });
-
-            handles.push(handle);
         }
 
-        // Wait for all threads to finish
-        for handle in handles {
-            if let Err(e) = handle.join() {
-                eprintln!("Test thread panicked: {:?}", e);
-                // You may want to propagate the panic or count failures
-            }
-        }
+        drop(tx);
     });
+
+    let mut all_results: Vec<TestResult> = Vec::new();
+
+    while let Ok(group_results) = rx.recv() {
+        all_results.extend(group_results);
+    }
+
+    all_results
 }
 
 #[tokio::main]
