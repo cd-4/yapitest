@@ -1,4 +1,5 @@
 use anyhow::{Error, Result, anyhow};
+use colored::*;
 use serde::Deserialize;
 use serde_yaml::{Value, from_value};
 use std::collections::HashMap;
@@ -50,7 +51,8 @@ pub fn print_test_results(test_results: &Vec<TestResult>) {
 
     let percent_pass = 100.0 * (num_passes as f64) / (total_tests as f64);
     if num_failures == 0 {
-        println!("✔️ All {} tests passed (100%)", total_tests,);
+        let msg = format!("✔️ All {} tests passed (100%)", total_tests,);
+        println!("{}", msg.green());
     } else {
         println!(
             "{}/{} of tests passed ({:.2}%)",
