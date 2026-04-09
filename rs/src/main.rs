@@ -229,6 +229,8 @@ async fn run_tests_thread(tests: &Vec<Test>) -> Vec<TestResult> {
     output
 }
 
+fn print_test_results(results: &Vec<TestResult>) {}
+
 async fn run_tests(tests: &Vec<Test>, threads: Option<u64>) -> Vec<TestResult> {
     let num_threads = threads.unwrap_or(1);
 
@@ -339,5 +341,6 @@ async fn main() {
     }
 
     println!("Collected {} Tests", tests.len());
-    run_tests(&tests, args.threads).await;
+    let test_results = run_tests(&tests, args.threads).await;
+    print_test_results(&test_results);
 }

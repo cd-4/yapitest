@@ -34,11 +34,21 @@ pub struct TestSpec {
 }
 
 pub struct TestResult {
+    // test_name: String,
+    // test_path: PathBuf,
     failing_step: Option<TestStepResult>,
     success: bool,
 }
 
 impl TestResult {
+    pub fn get_failing_step(&self) -> &Option<TestStepResult> {
+        &self.failing_step
+    }
+
+    pub fn passed(&self) -> bool {
+        self.success
+    }
+
     pub fn make_failure_from_error(
         step_id: Option<String>,
         failure_reason: TestStepFailureReason,
