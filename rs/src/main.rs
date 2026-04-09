@@ -19,6 +19,7 @@ mod test_step;
 use crate::config::ConfigData;
 use crate::test::Test;
 use crate::test::TestResult;
+use crate::test::print_test_results;
 
 fn is_yaml(path: &PathBuf) -> bool {
     if let Some(extension) = path.extension() {
@@ -230,12 +231,6 @@ async fn run_tests_thread(tests: &Vec<Test>) -> Vec<TestResult> {
     output
 }
 
-fn print_test_results(results: &Vec<TestResult>) {
-    for test in results.iter() {
-        //if test.su
-    }
-}
-
 async fn run_tests(tests: &Vec<Test>, threads: Option<u64>) -> Vec<TestResult> {
     let num_threads = threads.unwrap_or(1);
 
@@ -349,11 +344,11 @@ async fn main() {
 
     println!("Collected {} Tests", tests.len());
     let test_results = run_tests(&tests, args.threads).await;
-    print_test_results(&test_results);
     let end_time = SystemTime::now();
     let duration = end_time
         .duration_since(start_time)
         .expect("Time went backwards")
         .as_secs_f32();
     println!("Ran {} tests in {} seconds", tests.len(), duration);
+    print_test_results(&test_results);
 }

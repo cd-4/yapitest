@@ -33,11 +33,9 @@ pub struct TestSpec {
     groups: Option<Vec<String>>,
 }
 
-pub fn print_test_results(test_results: Vec<TestResult>) {
+pub fn print_test_results(test_results: &Vec<TestResult>) {
     let mut passes: Vec<&TestResult> = vec![];
     let mut fails: Vec<&TestResult> = vec![];
-
-    let total_tests = test_results.len();
 
     for test_result in test_results.iter() {
         if test_result.passed() {
@@ -46,6 +44,15 @@ pub fn print_test_results(test_results: Vec<TestResult>) {
             fails.push(test_result);
         }
     }
+    let total_tests = test_results.len();
+    let num_failures = fails.len();
+    let num_passes = passes.len();
+
+    let percent_pass = 100.0 * (num_passes as f64) / (total_tests as f64);
+    println!(
+        "{}/{} of tests passed ({:.2}%)",
+        num_passes, total_tests, percent_pass
+    );
 }
 
 pub struct TestResult {
