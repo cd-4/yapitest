@@ -60,20 +60,18 @@ pub fn print_test_results(test_results: &Vec<TestResult>) {
         );
     }
 
-    // ❌
+    println!("Failures:");
     for failure in fails.iter() {
         let failure_message = format!(
-            "{}\n  ❌ {}",
+            "{}\n❌ {}",
             failure.test_path.display(),
             failure.test_name.red(),
         );
         println!("{}", failure_message);
 
-        /*
-                if let Some(msg) = failure.and_then(|v| v.get_failure_message()) {
-                    println!("{}", msg);
-                }
-        */
+        if let Some(msg) = failure.get_failure_message() {
+            println!("  {}", msg);
+        }
     }
 }
 
@@ -87,6 +85,15 @@ pub struct TestResult {
 impl TestResult {
     pub fn get_failing_step(&self) -> &Option<TestStepResult> {
         &self.failing_step
+    }
+
+    pub fn get_failure_message(&self) -> Option<String> {
+        if let Some(step) = &self.failing_step {
+            if let Some(msg) = &step.failure_message {
+                return Some(msg.clone());
+            }
+        }
+        return None;
     }
 
     pub fn passed(&self) -> bool {

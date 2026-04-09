@@ -614,13 +614,6 @@ impl TestStepResult {
         }
     }
 
-    pub fn get_failure_message(&self) -> Option<String> {
-        if let Some(msg) = &self.failure_message {
-            return Some(msg.clone());
-        }
-        return None;
-    }
-
     pub fn get_field(&self, keys: String) -> Result<Option<Value>> {
         let sections: Vec<&str> = keys.split(".").collect();
 
