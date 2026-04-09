@@ -33,6 +33,21 @@ pub struct TestSpec {
     groups: Option<Vec<String>>,
 }
 
+pub fn print_test_results(test_results: Vec<TestResult>) {
+    let mut passes: Vec<&TestResult> = vec![];
+    let mut fails: Vec<&TestResult> = vec![];
+
+    let total_tests = test_results.len();
+
+    for test_result in test_results.iter() {
+        if test_result.passed() {
+            passes.push(test_result);
+        } else {
+            fails.push(test_result);
+        }
+    }
+}
+
 pub struct TestResult {
     test_name: String,
     test_path: PathBuf,
