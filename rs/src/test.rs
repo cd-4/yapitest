@@ -187,8 +187,6 @@ impl Test {
     }
 
     pub async fn run(&self) -> TestResult {
-        //println!("Running Test: {}", self.name);
-
         let mut prior_steps: HashMap<String, TestStepResult> = HashMap::new();
 
         if let (Some(setup_id), Some(cfg)) = (self.setup.clone(), &self.config) {

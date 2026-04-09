@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
+use tokio::runtime::Runtime; // or use Handle if you already have a runtime
 use walkdir::WalkDir;
 
 mod config;
@@ -15,6 +16,7 @@ mod test_step;
 
 use crate::config::ConfigData;
 use crate::test::Test;
+use crate::test::TestResult;
 
 fn is_yaml(path: &PathBuf) -> bool {
     if let Some(extension) = path.extension() {
@@ -216,39 +218,17 @@ fn load_tests(
     }
 }
 
-async fn run_tests_thread(tests: &Vec<Test>) {
+async fn run_tests_thread(tests: &Vec<Test>) -> Vec<TestResult> {
+    let mut output: Vec<TestResult> = vec![];
     for test in tests.iter() {
         println!("-----------------------------");
-        let _x = test.run().await;
+        let result = test.run().await;
+        output.push(result);
     }
+    output
 }
 
 async fn run_tests(tests: &Vec<Test>, threads: Option<u64>) {
-    /*
-        let mut num_threads: u64 = 1;
-        if let Some(t) = threads {
-            num_threads = t;
-        }
-
-        if num_threads == 1 {
-            run_tests_thread(tests).await;
-        } else {
-            let chunk_size = (tests.len() as u64).div_ceil(num_threads);
-            let test_groups: Vec<&[Test]> = tests.chunks(chunk_size as usize).collect();
-            let mut threads = vec![];
-            for group in test_groups.iter() {
-                let handle = thread::spawn(|| {
-                    let tests_vec = group.to_vec();
-                    run_tests_thread(&tests_vec);
-                });
-                threads.push(handle);
-            }
-
-            for handle in threads.iter() {
-                handle.join();
-            }
-        }
-    */
     let num_threads = threads.unwrap_or(1);
 
     if num_threads == 1 {
@@ -262,18 +242,29 @@ async fn run_tests(tests: &Vec<Test>, threads: Option<u64>) {
     thread::scope(|s| {
         let mut handles = vec![];
 
-        for group in &test_groups {
-            let handle = s.spawn(|| {
-                let tests_vec = group.to_vec(); // owned copy per thread
-                // Note: if run_tests_thread is async, you'll need to block_on it
-                // or make a synchronous version.
-                run_tests_thread(&tests_vec); // or block_on(...) if needed
+        for group in test_groups {
+            // Clone or move what you need into the thread
+            let group_owned = group.to_vec(); // or use Arc if you can avoid cloning
+
+            let handle = s.spawn(move || {
+                // === Create a fresh runtime per thread (safest and simplest) ===
+                let rt = Runtime::new().expect("Failed to create Tokio runtime in worker thread");
+
+                // Run the async test group to completion
+                rt.block_on(async {
+                    run_tests_thread(&group_owned).await;
+                });
             });
+
             handles.push(handle);
         }
 
+        // Wait for all threads to finish
         for handle in handles {
-            let x = handle.join();
+            if let Err(e) = handle.join() {
+                eprintln!("Test thread panicked: {:?}", e);
+                // You may want to propagate the panic or count failures
+            }
         }
     });
 }
