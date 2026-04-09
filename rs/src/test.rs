@@ -34,8 +34,8 @@ pub struct TestSpec {
 }
 
 pub struct TestResult {
-    // test_name: String,
-    // test_path: PathBuf,
+    test_name: String,
+    test_path: PathBuf,
     failing_step: Option<TestStepResult>,
     success: bool,
 }
@@ -50,6 +50,8 @@ impl TestResult {
     }
 
     pub fn make_failure_from_error(
+        test_name: &String,
+        test_path: &PathBuf,
         step_id: Option<String>,
         failure_reason: TestStepFailureReason,
         error_prefix: String,
@@ -61,13 +63,21 @@ impl TestResult {
             format!("{}: ({})", error_prefix, error),
         );
         TestResult {
+            test_name: test_name.to_string(),
+            test_path: test_path.to_path_buf(),
             failing_step: Some(step_result),
             success: false,
         }
     }
 
-    pub fn make_failure(failure: TestStepResult) -> TestResult {
+    pub fn make_failure(
+        test_name: &String,
+        test_path: &PathBuf,
+        failure: TestStepResult,
+    ) -> TestResult {
         TestResult {
+            test_name: test_name.to_string(),
+            test_path: test_path.to_path_buf(),
             failing_step: Some(failure),
             success: false,
         }
@@ -207,6 +217,8 @@ impl Test {
                     }
                     Err(e) => {
                         return TestResult::make_failure_from_error(
+                            &self.name,
+                            &self.path,
                             Some("setup".to_string()),
                             TestStepFailureReason::Miscellaneous,
                             "Step Failed to Run".to_string(),
@@ -216,6 +228,8 @@ impl Test {
                 },
                 Err(e) => {
                     return TestResult::make_failure_from_error(
+                        &self.name,
+                        &self.path,
                         Some("setup".to_string()),
                         TestStepFailureReason::SharedStepNotFoundError,
                         "Step Group Not Found".to_string(),
@@ -231,7 +245,7 @@ impl Test {
             match real_step.run(&self.config, &prior_steps).await {
                 Ok(result) => {
                     if result.status != TestStepFailureReason::NoFailure {
-                        return TestResult::make_failure(result);
+                        return TestResult::make_failure(&self.name, &self.path, result);
                     } else {
                         if let Some(id) = real_step.get_id() {
                             prior_steps.insert(id.clone(), result);
@@ -244,6 +258,8 @@ impl Test {
                         step_id = Some(actual_step_id.clone());
                     }
                     return TestResult::make_failure_from_error(
+                        &self.name,
+                        &self.path,
                         step_id,
                         TestStepFailureReason::Miscellaneous,
                         "Step Failed to Run".to_string(),
@@ -262,6 +278,8 @@ impl Test {
                     }
                     Err(e) => {
                         return TestResult::make_failure_from_error(
+                            &self.name,
+                            &self.path,
                             Some("teardown".to_string()),
                             TestStepFailureReason::Miscellaneous,
                             "Test Failed to Run".to_string(),
@@ -271,6 +289,8 @@ impl Test {
                 },
                 Err(e) => {
                     return TestResult::make_failure_from_error(
+                        &self.name,
+                        &self.path,
                         Some("teardown".to_string()),
                         TestStepFailureReason::SharedStepNotFoundError,
                         "Step Group Not Found".to_string(),
@@ -279,9 +299,11 @@ impl Test {
                 }
             }
         }
-        return TestResult {
+        TestResult {
+            test_name: self.name.clone(),
+            test_path: self.path.clone(),
             failing_step: None,
             success: true,
-        };
+        }
     }
 }
