@@ -33,6 +33,37 @@ pub struct TestSpec {
     groups: Option<Vec<String>>,
 }
 
+pub struct TestResult {
+    failing_step: Option<TestStepResult>,
+    success: bool,
+}
+
+impl TestResult {
+    pub fn make_failure_from_error(
+        step_id: Option<String>,
+        failure_reason: TestStepFailureReason,
+        error_prefix: String,
+        error: Error,
+    ) -> TestResult {
+        let step_result = TestStepResult::make_failure(
+            &step_id,
+            failure_reason,
+            format!("{}: ({})", error_prefix, error),
+        );
+        TestResult {
+            failing_step: Some(step_result),
+            success: false,
+        }
+    }
+
+    pub fn make_failure(failure: TestStepResult) -> TestResult {
+        TestResult {
+            failing_step: Some(failure),
+            success: false,
+        }
+    }
+}
+
 fn is_test_name(key: String) -> bool {
     let lower_name = key.to_lowercase();
     lower_name.starts_with("test") || lower_name.ends_with("test")
@@ -155,7 +186,7 @@ impl Test {
         Ok((config, tests))
     }
 
-    pub async fn run(&self) {
+    pub async fn run(&self) -> TestResult {
         //println!("Running Test: {}", self.name);
 
         let mut prior_steps: HashMap<String, TestStepResult> = HashMap::new();
@@ -167,13 +198,21 @@ impl Test {
                         prior_steps.insert("setup".to_string(), result);
                     }
                     Err(e) => {
-                        eprintln!("Test Setup Failed: {}", e);
-                        panic!("ER");
+                        return TestResult::make_failure_from_error(
+                            Some("setup".to_string()),
+                            TestStepFailureReason::Miscellaneous,
+                            "Step Failed to Run".to_string(),
+                            e,
+                        );
                     }
                 },
                 Err(e) => {
-                    eprintln!("Error finding setup: {}", setup_id.clone());
-                    panic!("ER");
+                    return TestResult::make_failure_from_error(
+                        Some("setup".to_string()),
+                        TestStepFailureReason::SharedStepNotFoundError,
+                        "Step Group Not Found".to_string(),
+                        e,
+                    );
                 }
             }
         }
@@ -184,23 +223,26 @@ impl Test {
             match real_step.run(&self.config, &prior_steps).await {
                 Ok(result) => {
                     if result.status != TestStepFailureReason::NoFailure {
-                        if let Some(emsg) = result.failure_message {
-                            println!("Error: {}", emsg);
-                            panic!("ER");
-                        }
+                        return TestResult::make_failure(result);
                     } else {
                         if let Some(id) = real_step.get_id() {
                             prior_steps.insert(id.clone(), result);
                         }
-                        //println!("Success");
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error: {}", e);
-                    panic!("ER");
+                    let mut step_id: Option<String> = None;
+                    if let Some(actual_step_id) = real_step.get_id() {
+                        step_id = Some(actual_step_id.clone());
+                    }
+                    return TestResult::make_failure_from_error(
+                        step_id,
+                        TestStepFailureReason::Miscellaneous,
+                        "Step Failed to Run".to_string(),
+                        e,
+                    );
                 }
             }
-            //step.run();
         }
 
         if let (Some(teardown_id), Some(cfg)) = (self.teardown.clone(), &self.config) {
@@ -211,15 +253,27 @@ impl Test {
                         prior_steps.insert("teardown".to_string(), result);
                     }
                     Err(e) => {
-                        eprintln!("Test Teardown Failed: {}", e);
-                        panic!("ER");
+                        return TestResult::make_failure_from_error(
+                            Some("teardown".to_string()),
+                            TestStepFailureReason::Miscellaneous,
+                            "Test Failed to Run".to_string(),
+                            e,
+                        );
                     }
                 },
                 Err(e) => {
-                    eprintln!("Error finding setup: {}", teardown_id.clone());
-                    panic!("ER");
+                    return TestResult::make_failure_from_error(
+                        Some("teardown".to_string()),
+                        TestStepFailureReason::SharedStepNotFoundError,
+                        "Step Group Not Found".to_string(),
+                        e,
+                    );
                 }
             }
         }
+        return TestResult {
+            failing_step: None,
+            success: true,
+        };
     }
 }

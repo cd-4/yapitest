@@ -103,6 +103,7 @@ def healthcheck():
 # TESTED
 @app.route("/api/user/create", methods=["POST"])
 def create_user():
+    print("CREATING USER")
     if not request.is_json:
         return jsonify({"error": "Request must be JSON"})
     data = request.get_json()
@@ -144,7 +145,6 @@ def user():
 
 @app.route("/api/user/<username>", methods=["GET"])
 def get_user(username):
-    print(username)
     user = USERS_BY_USERNAME[username]
     output = user.full_json()
     return output

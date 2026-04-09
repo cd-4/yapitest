@@ -1,4 +1,6 @@
-use crate::test_step::{RunnableTestStep, TestStep, TestStepResult, TestStepSpec};
+use crate::test_step::{
+    RunnableTestStep, TestStep, TestStepFailureReason, TestStepResult, TestStepSpec,
+};
 use anyhow::{Error, Result, anyhow};
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -349,6 +351,7 @@ impl RunnableTestStep for TestStepGroup {
         }
 
         let result = TestStepResult::make_success(
+            Some(self.id.clone()),
             serde_yaml::from_value(Value::Null)?,
             serde_yaml::from_value(Value::Null)?,
             serde_json::to_value(outputs)?,

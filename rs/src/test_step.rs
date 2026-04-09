@@ -23,6 +23,8 @@ pub enum TestStepFailureReason {
     StatusCodeError,
     JsonDecodeError,
     ConfigurationError,
+    SharedStepNotFoundError,
+    Miscellaneous,
 }
 
 #[derive(Debug, Deserialize)]
@@ -59,6 +61,7 @@ pub struct TestStep {
 
 #[derive(Debug)]
 pub struct TestStepResult {
+    step_id: Option<String>,
     pub response_data: Option<Value>,
     pub request_data: Option<Value>,
     pub output_data: Option<Value>,
@@ -72,6 +75,7 @@ impl Clone for TestStepResult {
         let mut request_data: Option<Value> = None;
         let mut output_data: Option<Value> = None;
         let mut failure_message: Option<String> = None;
+        let mut step_id: Option<String> = None;
 
         if let Some(x) = &self.response_data {
             response_data = Some(x.clone());
@@ -89,7 +93,12 @@ impl Clone for TestStepResult {
             failure_message = Some(x.clone());
         }
 
+        if let Some(id) = &self.step_id {
+            step_id = Some(id.clone());
+        }
+
         TestStepResult {
+            step_id,
             response_data,
             request_data,
             output_data,
@@ -574,8 +583,13 @@ pub fn compare_data(
 }
 
 impl TestStepResult {
-    pub fn make_failure(reason: TestStepFailureReason, message: String) -> TestStepResult {
+    pub fn make_failure(
+        step_id: &Option<String>,
+        reason: TestStepFailureReason,
+        message: String,
+    ) -> TestStepResult {
         TestStepResult {
+            step_id: step_id.clone(),
             status: reason,
             response_data: None,
             request_data: None,
@@ -585,11 +599,13 @@ impl TestStepResult {
     }
 
     pub fn make_success(
+        step_id: Option<String>,
         response_data: Value,
         request_data: Value,
         output_data: Value,
     ) -> TestStepResult {
         TestStepResult {
+            step_id,
             status: TestStepFailureReason::NoFailure,
             response_data: Some(response_data),
             request_data: Some(request_data),
@@ -763,6 +779,7 @@ impl RunnableTestStep for TestStep {
             Err(_) => {
                 let identifier = self.get_identifier(prior_steps.len());
                 return Ok(TestStepResult::make_failure(
+                    &self.id,
                     TestStepFailureReason::ConfigurationError,
                     format!("No url specified for step {}", identifier),
                 ));
@@ -815,6 +832,7 @@ impl RunnableTestStep for TestStep {
                             exp_status_code, actual_status_code,
                         );
                         return Ok(TestStepResult::make_failure(
+                            &self.id,
                             TestStepFailureReason::StatusCodeError,
                             failure_message,
                         ));
@@ -839,6 +857,7 @@ impl RunnableTestStep for TestStep {
                             ) {
                                 let failure_message = format!("Assertion Error: {}", e);
                                 return Ok(TestStepResult::make_failure(
+                                    &self.id,
                                     TestStepFailureReason::ResponseError,
                                     failure_message,
                                 ));
@@ -850,6 +869,7 @@ impl RunnableTestStep for TestStep {
                         if self.expected_response_data.is_some() {
                             let failure_message = format!("Error Decoding Json: {}", e);
                             return Ok(TestStepResult::make_failure(
+                                &self.id,
                                 TestStepFailureReason::JsonDecodeError,
                                 failure_message,
                             ));
@@ -861,7 +881,14 @@ impl RunnableTestStep for TestStep {
                 return Err(anyhow!("Error Sending Request: {}", e));
             }
         }
+
+        let mut step_id: Option<String> = None;
+        if let Some(id) = &self.id {
+            step_id = Some(id.clone());
+        }
+
         return Ok(TestStepResult {
+            step_id,
             status: TestStepFailureReason::NoFailure,
             failure_message: None,
             request_data: Some(req_data),
