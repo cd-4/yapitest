@@ -62,11 +62,18 @@ pub fn print_test_results(test_results: &Vec<TestResult>) {
 
     // ❌
     for failure in fails.iter() {
-        println!(
-            "{} Failed ({})",
-            failure.test_name,
-            failure.test_path.display()
+        let failure_message = format!(
+            "{}\n  ❌ {}",
+            failure.test_path.display(),
+            failure.test_name.red(),
         );
+        println!("{}", failure_message);
+
+        /*
+                if let Some(msg) = failure.and_then(|v| v.get_failure_message()) {
+                    println!("{}", msg);
+                }
+        */
     }
 }
 
