@@ -49,10 +49,22 @@ pub fn print_test_results(test_results: &Vec<TestResult>) {
     let num_passes = passes.len();
 
     let percent_pass = 100.0 * (num_passes as f64) / (total_tests as f64);
-    println!(
-        "{}/{} of tests passed ({:.2}%)",
-        num_passes, total_tests, percent_pass
-    );
+    if num_failures == 0 {
+        println!("✅ All {} tests passed (100%)", total_tests,);
+    } else {
+        println!(
+            "{}/{} of tests passed ({:.2}%)",
+            num_passes, total_tests, percent_pass
+        );
+    }
+
+    for failure in fails.iter() {
+        println!(
+            "{} Failed ({})",
+            failure.test_name,
+            failure.test_path.display()
+        );
+    }
 }
 
 pub struct TestResult {
