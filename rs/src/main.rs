@@ -3,6 +3,7 @@ use clap::{ArgAction, Parser};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc;
@@ -224,7 +225,8 @@ fn load_tests(
 async fn run_tests_thread(tests: &Vec<Test>) -> Vec<TestResult> {
     let mut output: Vec<TestResult> = vec![];
     for test in tests.iter() {
-        println!("-----------------------------");
+        print!(".");
+        io::stdout().flush().unwrap();
         let result = test.run().await;
         output.push(result);
     }
