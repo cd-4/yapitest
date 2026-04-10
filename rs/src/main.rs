@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
 use clap::{ArgAction, Parser};
+use colored::*;
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -7,7 +8,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::SystemTime;
-use tokio::runtime::Runtime; // or use Handle if you already have a runtime
+use tokio::runtime::Runtime;
 
 mod config;
 mod test;
@@ -221,9 +222,13 @@ fn load_tests(
 async fn run_tests_thread(tests: &Vec<Test>) -> Vec<TestResult> {
     let mut output: Vec<TestResult> = vec![];
     for test in tests.iter() {
-        print!(".");
-        io::stdout().flush().unwrap();
         let result = test.run().await;
+        if result.passed() {
+            println!("  {}  {}", "PASS".green(), result.name());
+        } else {
+            println!("  {}  {}", "FAIL".red().bold(), result.name());
+        }
+        io::stdout().flush().unwrap();
         output.push(result);
     }
     output
@@ -291,9 +296,13 @@ async fn main() {
         }
     }
 
+    let divider = "─".repeat(40);
+    println!("yapitest v{}", env!("CARGO_PKG_VERSION"));
+    println!("{}", divider.dimmed());
+
     let mut configs: HashMap<PathBuf, Arc<RwLock<ConfigData>>> = HashMap::new();
     let mut tests: Vec<Test> = vec![];
-    println!("Collecting Tests...");
+    println!("{}", "Collecting tests...".dimmed());
     for path in test_paths.iter() {
         match load_tests(&mut configs, path) {
             Ok(found_tests) => {
@@ -340,13 +349,14 @@ async fn main() {
         tests.retain(|t| !contains_text(t, &excludes));
     }
 
-    println!("Collected {} Tests", tests.len());
+    println!("{}", format!("Found {} tests", tests.len()).dimmed());
+    println!();
     let test_results = run_tests(&tests, args.threads).await;
     let end_time = SystemTime::now();
     let duration = end_time
         .duration_since(start_time)
         .expect("Time went backwards")
         .as_secs_f32();
-    println!("Ran {} tests in {} seconds", tests.len(), duration);
-    print_test_results(&test_results);
+    println!();
+    print_test_results(&test_results, duration);
 }

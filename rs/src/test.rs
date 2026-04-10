@@ -34,7 +34,7 @@ pub struct TestSpec {
     groups: Option<Vec<String>>,
 }
 
-pub fn print_test_results(test_results: &Vec<TestResult>) {
+pub fn print_test_results(test_results: &Vec<TestResult>, duration_secs: f32) {
     let mut passes: Vec<&TestResult> = vec![];
     let mut fails: Vec<&TestResult> = vec![];
 
@@ -45,33 +45,44 @@ pub fn print_test_results(test_results: &Vec<TestResult>) {
             fails.push(test_result);
         }
     }
-    let total_tests = test_results.len();
-    let num_failures = fails.len();
-    let num_passes = passes.len();
 
-    let percent_pass = 100.0 * (num_passes as f64) / (total_tests as f64);
+    let total = test_results.len();
+    let num_passes = passes.len();
+    let num_failures = fails.len();
+    let divider = "─".repeat(40);
+
+    println!("{}", divider.dimmed());
+
     if num_failures == 0 {
-        let msg = format!("✔️ All {} tests passed (100%)", total_tests,);
-        println!("{}", msg.green());
+        println!(
+            "{}  ({} total, {:.2}s)",
+            format!("Results: {} passed", num_passes).green(),
+            total,
+            duration_secs
+        );
     } else {
         println!(
-            "{}/{} of tests passed ({:.2}%)",
-            num_passes, total_tests, percent_pass
+            "Results: {}  ({} total, {:.2}s)",
+            format!("{} passed, {} failed", num_passes, num_failures).red(),
+            total,
+            duration_secs
         );
     }
 
-    println!("Failures:");
-    for failure in fails.iter() {
-        let failure_message = format!(
-            "{}\n❌ {}",
-            failure.test_path.display(),
-            failure.test_name.red(),
-        );
-        println!("{}", failure_message);
+    println!("{}", divider.dimmed());
 
-        if let Some(msg) = failure.get_failure_message() {
-            println!("  {}", msg);
+    if !fails.is_empty() {
+        println!();
+        println!("{}", "FAILURES".bold());
+        for failure in fails.iter() {
+            println!();
+            println!("  {} {}", "✗".red(), failure.test_name.bold());
+            println!("    File:  {}", failure.test_path.display());
+            if let Some(msg) = failure.get_failure_message() {
+                println!("    Error: {}", msg);
+            }
         }
+        println!();
     }
 }
 
@@ -83,6 +94,10 @@ pub struct TestResult {
 }
 
 impl TestResult {
+    pub fn name(&self) -> &str {
+        &self.test_name
+    }
+
     pub fn get_failing_step(&self) -> &Option<TestStepResult> {
         &self.failing_step
     }
