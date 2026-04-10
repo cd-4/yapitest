@@ -10,7 +10,7 @@ Yapitest (Yaml API Testing) is an API testing framework composed entirely of YAM
 ## Installation
 
 ```bash
-pip install yapitest
+cargo install --git https://github.com/cd-4/yapitest rs
 ```
 
 ---
