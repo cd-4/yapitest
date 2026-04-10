@@ -7,14 +7,9 @@ use reqwest::{Client, Method};
 use serde::Deserialize;
 
 use serde_json::{Map, Value};
-use std::any::Any;
 use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
-use std::fs::write;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
-
-use std::mem::discriminant;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum TestStepFailureReason {

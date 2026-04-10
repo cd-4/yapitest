@@ -1,17 +1,13 @@
-use anyhow::{Error, Result, anyhow};
+use anyhow::{Result, anyhow};
 use clap::{ArgAction, Parser};
 use std::collections::HashMap;
-use std::env;
-use std::fs;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::path::PathBuf;
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 use std::thread;
-use std::time::{Instant, SystemTime};
+use std::time::SystemTime;
 use tokio::runtime::Runtime; // or use Handle if you already have a runtime
-use walkdir::WalkDir;
 
 mod config;
 mod test;

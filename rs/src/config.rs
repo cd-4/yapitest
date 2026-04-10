@@ -1,6 +1,4 @@
-use crate::test_step::{
-    RunnableTestStep, TestStep, TestStepFailureReason, TestStepResult, TestStepSpec,
-};
+use crate::test_step::{RunnableTestStep, TestStep, TestStepResult, TestStepSpec};
 use anyhow::{Error, Result, anyhow};
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -10,7 +8,6 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::{Arc, LazyLock, RwLock};
 
 #[derive(Debug, Deserialize)]
