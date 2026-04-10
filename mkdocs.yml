@@ -1,0 +1,44 @@
+site_name: Yapitest
+site_url: https://cd-4.github.io/yapitest/
+site_description: A YAML-based API testing framework — write your API tests in plain YAML.
+repo_url: https://github.com/cd-4/yapitest
+repo_name: cd-4/yapitest
+copyright: Copyright &copy; Charlie Dudzik
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - content.code.copy
+    - content.code.annotate
+    - search.suggest
+
+nav:
+  - Home: index.md
+  - Tests: tests.md
+  - Config Files: config.md
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - admonition
+  - pymdownx.details
+  - attr_list
+  - md_in_html
+  - tables
