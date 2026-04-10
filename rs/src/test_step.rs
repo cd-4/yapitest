@@ -355,39 +355,26 @@ pub fn compare_data_objects(
     config: &Option<Arc<RwLock<ConfigData>>>,
     prior_steps: &HashMap<String, TestStepResult>,
 ) -> Result<()> {
-    for key in observed_object.keys() {
-        let observed = observed_object.get(key).unwrap();
-        let exp_value = expected_object.get(key);
+    // Check every expected key is present and matches in the observed response.
+    // Iterating expected (not observed) ensures missing fields are caught.
+    for key in expected_object.keys() {
+        let expected = expected_object.get(key).unwrap();
 
-        if exp_value.is_none() {
-            let size_str: String = format!("len({})", key);
-            if let Some(expected_size) = expected_object.get(&size_str) {
-                match check_size(observed, expected_size.as_str().unwrap().to_string()) {
-                    Ok(is_correct_size) => {
-                        if !is_correct_size {
-                            return Err(anyhow!(
-                                "Incorrect Size: len({}.{}) !{}",
-                                keys,
-                                key,
-                                expected_size
-                            ));
-                        }
-                    }
-                    Err(e) => {
-                        return Err(anyhow!("Error checking size for {}.{}", keys, key));
-                    }
-                }
-            } else if full {
+        // `len(field)` keys are size assertions handled in the observed pass below.
+        if key.starts_with("len(") && key.ends_with(')') {
+            continue;
+        }
+
+        let observed = match observed_object.get(key) {
+            Some(v) => v,
+            None => {
                 return Err(anyhow!(
-                    "'full' is set and value '{}.{}' was not found",
+                    "Expected field '{}.{}' not found in response",
                     keys,
                     key
                 ));
             }
-            continue;
-        }
-
-        let expected = exp_value.unwrap();
+        };
 
         compare_data_inner(
             observed,
@@ -397,6 +384,37 @@ pub fn compare_data_objects(
             config,
             prior_steps,
         )?;
+    }
+
+    // Walk observed keys for `len(field)` size checks and the `full` mode check
+    // (no unexpected extra fields in the response).
+    for key in observed_object.keys() {
+        let observed = observed_object.get(key).unwrap();
+
+        let size_str = format!("len({})", key);
+        if let Some(expected_size) = expected_object.get(&size_str) {
+            match check_size(observed, expected_size.as_str().unwrap().to_string()) {
+                Ok(is_correct_size) => {
+                    if !is_correct_size {
+                        return Err(anyhow!(
+                            "Incorrect Size: len({}.{}) !{}",
+                            keys,
+                            key,
+                            expected_size
+                        ));
+                    }
+                }
+                Err(_) => {
+                    return Err(anyhow!("Error checking size for {}.{}", keys, key));
+                }
+            }
+        } else if full && !expected_object.contains_key(key) {
+            return Err(anyhow!(
+                "'full' is set and unexpected field '{}.{}' was found in response",
+                keys,
+                key
+            ));
+        }
     }
 
     Ok(())

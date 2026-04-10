@@ -156,6 +156,10 @@ fn is_test_name(key: String) -> bool {
 }
 
 impl Test {
+    pub fn path(&self) -> &PathBuf {
+        &self.path
+    }
+
     pub fn add_config(&mut self, config: Arc<RwLock<ConfigData>>) {
         match &self.config {
             Some(cfg) => {

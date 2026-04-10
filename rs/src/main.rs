@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
-use std::sync::{Mutex, mpsc};
+use std::sync::mpsc;
 use std::thread;
 use std::time::SystemTime;
 use tokio::runtime::Runtime;
@@ -18,7 +18,6 @@ use crate::config::ConfigData;
 use crate::test::Test;
 use crate::test::TestResult;
 use crate::test::print_test_results;
-use crate::test_step::TestStepResult;
 
 fn is_yaml(path: &PathBuf) -> bool {
     if let Some(extension) = path.extension() {
@@ -242,21 +241,42 @@ async fn run_tests(tests: &Vec<Test>, threads: Option<u64>) -> Vec<TestResult> {
         return run_tests_thread(tests).await;
     }
 
-    let chunk_size = (tests.len() as u64).div_ceil(num_threads);
-    let test_groups: Vec<&[Test]> = tests.chunks(chunk_size as usize).collect();
+    // Group tests by source file before distributing to threads. Tests in the
+    // same file share state through config step-sets (e.g. `once: true` groups
+    // like `create-user`), so they must run sequentially on the same thread to
+    // avoid concurrent mutations of shared API state.
+    let mut file_order: Vec<PathBuf> = Vec::new();
+    let mut file_groups: HashMap<PathBuf, Vec<Test>> = HashMap::new();
+
+    for test in tests.iter() {
+        if !file_groups.contains_key(test.path()) {
+            file_order.push(test.path().clone());
+        }
+        file_groups
+            .entry(test.path().clone())
+            .or_default()
+            .push(test.clone());
+    }
+
+    // Distribute whole file groups round-robin across threads.
+    // Cap thread count at the number of distinct files.
+    let actual_threads = (num_threads as usize).min(file_order.len());
+    let mut thread_groups: Vec<Vec<Test>> = (0..actual_threads).map(|_| Vec::new()).collect();
+
+    for (i, path) in file_order.into_iter().enumerate() {
+        if let Some(group) = file_groups.remove(&path) {
+            thread_groups[i % actual_threads].extend(group);
+        }
+    }
 
     let (tx, rx) = mpsc::channel::<Vec<TestResult>>();
 
     thread::scope(|s| {
-        for group in test_groups {
-            let group_owned = group.to_vec();
+        for group in thread_groups {
             let tx_clone = tx.clone();
-            //let cloned_arc = Arc::clone(&shared_steps_arc);
             s.spawn(move || {
                 let rt = Runtime::new().expect("Failed to create runtime");
-
-                let group_results = rt.block_on(async { run_tests_thread(&group_owned).await });
-
+                let group_results = rt.block_on(async { run_tests_thread(&group).await });
                 let _ = tx_clone.send(group_results);
             });
         }
