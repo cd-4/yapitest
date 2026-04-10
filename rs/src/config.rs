@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
-use std::sync::{Arc, LazyLock, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 use tokio::sync::OnceCell;
 
 #[derive(Debug, Deserialize)]
@@ -85,7 +85,8 @@ impl TestStepGroup {
                     }
                 }
                 Err(e) => {
-                    return Err(anyhow!("Error running step: {}", e));
+                    let step_name = step.get_id().map(|s| s.as_str()).unwrap_or("(unnamed)");
+                    return Err(anyhow!("step '{}' failed: {}", step_name, e));
                 }
             }
         }
@@ -101,13 +102,13 @@ impl TestStepGroup {
                 let mut output_sections: Vec<String> =
                     output_str_copy.split('.').map(|v| v.to_string()).collect();
 
-                let mut step_id: String = "".to_string();
-
-                if let Some(step_id_val) = output_sections.get(0) {
-                    step_id = step_id_val.clone();
-                } else {
-                    return Err(anyhow!("Invalid Step Reference: {}", output_value));
-                }
+                let step_id = match output_sections.get(0) {
+                    Some(v) => v.clone(),
+                    None => return Err(anyhow!(
+                        "output '{}': '{}' is not a valid step reference — expected '$<step-id>.<field>'",
+                        output_key, output_value
+                    )),
+                };
 
                 if let Some(step) = local_steps.get(&step_id) {
                     output_sections.remove(0);
@@ -120,13 +121,15 @@ impl TestStepGroup {
                             }
                         }
                         return Err(anyhow!(
-                            "Field {} not found in step {}",
-                            output_key,
-                            step_id,
+                            "output '{}': field '{}' not found in step '{}'",
+                            output_key, field_key, step_id,
                         ));
                     }
                 } else {
-                    return Err(anyhow!("Step {} not found.", step_id));
+                    return Err(anyhow!(
+                        "output '{}' references step '{}', but no step with that id was found",
+                        output_key, step_id
+                    ));
                 }
             }
         }
@@ -169,7 +172,7 @@ impl ConfigData {
             let step_group = u.get_step_group(step_group_key)?;
             return Ok(step_group.clone());
         }
-        Err(anyhow!("Step Group {} Not Found", step_group_key))
+        Err(anyhow!("step-set '{}' not found", step_group_key))
     }
 
     pub fn get_string_value(&self, key: String) -> Result<String> {
@@ -197,7 +200,7 @@ impl ConfigData {
         if let Some(par) = &self.parent {
             return par.read().unwrap().get_string_value(key);
         }
-        Err(anyhow!("Url {} not found in any config", key))
+        Err(anyhow!("'{}' not found in any config", key))
     }
 
     pub fn set_parent(&mut self, parent: Arc<RwLock<ConfigData>>) {

@@ -1,7 +1,12 @@
 [package]
-name = "rs"
+name = "yapitest"
 version = "0.1.0"
 edition = "2024"
+description = "A YAML-based API testing framework"
+license = "MIT"
+repository = "https://github.com/cd-4/yapitest"
+homepage = "https://cd-4.github.io/yapitest"
+readme = "../README.md"
 
 [dependencies]
 anyhow = "1.0.102"
