@@ -1,17 +1,19 @@
 use anyhow::{Error, Result, anyhow};
+use colored::*;
 use serde::Deserialize;
 use serde_yaml::{Value, from_value};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
 use crate::config::{ConfigData, ConfigSpec, TestStepGroupReference};
 use crate::test_step::{
-    RunnableTestStep, TestStep, TestStepFailureReason, TestStepResult, TestStepSpec, TestStepStatus,
+    RunnableTestStep, TestStep, TestStepFailureReason, TestStepResult, TestStepSpec,
 };
 
+#[derive(Clone)]
 pub struct Test {
     pub name: String,
     path: PathBuf,
@@ -19,7 +21,7 @@ pub struct Test {
     pub groups: Option<Vec<String>>,
     setup: Option<String>,
     teardown: Option<String>,
-    steps: Vec<Arc<RwLock<dyn RunnableTestStep>>>,
+    steps: Vec<Arc<RwLock<dyn RunnableTestStep + Send + Sync>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -32,12 +34,132 @@ pub struct TestSpec {
     groups: Option<Vec<String>>,
 }
 
+pub fn print_test_results(test_results: &Vec<TestResult>, duration_secs: f32) {
+    let mut passes: Vec<&TestResult> = vec![];
+    let mut fails: Vec<&TestResult> = vec![];
+
+    for test_result in test_results.iter() {
+        if test_result.passed() {
+            passes.push(test_result);
+        } else {
+            fails.push(test_result);
+        }
+    }
+
+    let total = test_results.len();
+    let num_passes = passes.len();
+    let num_failures = fails.len();
+    let divider = "─".repeat(40);
+
+    println!("{}", divider.dimmed());
+
+    if num_failures == 0 {
+        println!(
+            "{}  ({} total, {:.2}s)",
+            format!("Results: {} passed", num_passes).green(),
+            total,
+            duration_secs
+        );
+    } else {
+        println!(
+            "Results: {}  ({} total, {:.2}s)",
+            format!("{} passed, {} failed", num_passes, num_failures).red(),
+            total,
+            duration_secs
+        );
+    }
+
+    println!("{}", divider.dimmed());
+
+    if !fails.is_empty() {
+        println!();
+        println!("{}", "FAILURES".bold());
+        for failure in fails.iter() {
+            println!();
+            println!("  {} {}", "✗".red(), failure.test_name.bold());
+            println!("    File:  {}", failure.test_path.display());
+            if let Some(msg) = failure.get_failure_message() {
+                println!("    Error: {}", msg);
+            }
+        }
+        println!();
+    }
+}
+
+pub struct TestResult {
+    test_name: String,
+    test_path: PathBuf,
+    failing_step: Option<TestStepResult>,
+    success: bool,
+}
+
+impl TestResult {
+    pub fn name(&self) -> &str {
+        &self.test_name
+    }
+
+    pub fn get_failing_step(&self) -> &Option<TestStepResult> {
+        &self.failing_step
+    }
+
+    pub fn get_failure_message(&self) -> Option<String> {
+        if let Some(step) = &self.failing_step {
+            if let Some(msg) = &step.failure_message {
+                return Some(msg.clone());
+            }
+        }
+        return None;
+    }
+
+    pub fn passed(&self) -> bool {
+        self.success
+    }
+
+    pub fn make_failure_from_error(
+        test_name: &String,
+        test_path: &PathBuf,
+        step_id: Option<String>,
+        failure_reason: TestStepFailureReason,
+        error_prefix: String,
+        error: Error,
+    ) -> TestResult {
+        let step_result = TestStepResult::make_failure(
+            &step_id,
+            failure_reason,
+            format!("{}: ({})", error_prefix, error),
+        );
+        TestResult {
+            test_name: test_name.to_string(),
+            test_path: test_path.to_path_buf(),
+            failing_step: Some(step_result),
+            success: false,
+        }
+    }
+
+    pub fn make_failure(
+        test_name: &String,
+        test_path: &PathBuf,
+        failure: TestStepResult,
+    ) -> TestResult {
+        TestResult {
+            test_name: test_name.to_string(),
+            test_path: test_path.to_path_buf(),
+            failing_step: Some(failure),
+            success: false,
+        }
+    }
+}
+
 fn is_test_name(key: String) -> bool {
     let lower_name = key.to_lowercase();
     lower_name.starts_with("test") || lower_name.ends_with("test")
 }
 
 impl Test {
+    pub fn path(&self) -> &PathBuf {
+        &self.path
+    }
+
     pub fn add_config(&mut self, config: Arc<RwLock<ConfigData>>) {
         match &self.config {
             Some(cfg) => {
@@ -66,22 +188,6 @@ impl Test {
         }
     }
 
-    pub fn has_config(&self) -> bool {
-        self.config.is_some()
-    }
-
-    pub fn set_config(&mut self, config: Arc<RwLock<ConfigData>>) {
-        match &self.config {
-            Some(cfg) => {
-                cfg.write().unwrap().set_parent(Arc::clone(&config));
-            }
-            None => {
-                self.config = Some(Arc::clone(&config));
-            }
-        }
-        self.config = Some(config);
-    }
-
     pub fn from_spec(path: PathBuf, name: String, spec: TestSpec) -> Result<Test> {
         let mut config: Option<Arc<RwLock<ConfigData>>> = None;
         if let Some(config_spec) = spec.config {
@@ -89,7 +195,7 @@ impl Test {
             config = Some(Arc::new(RwLock::new(loaded_config)));
         }
 
-        let mut test_steps: Vec<Arc<RwLock<dyn RunnableTestStep>>> = vec![];
+        let mut test_steps: Vec<Arc<RwLock<dyn RunnableTestStep + Send + Sync>>> = vec![];
 
         for step in spec.steps.into_iter() {
             match from_value::<TestStepSpec>(step.clone()) {
@@ -170,33 +276,104 @@ impl Test {
         Ok((config, tests))
     }
 
-    pub async fn run(&mut self) {
-        println!("Running Test: {}", self.name);
-        //config: &Option<Arc<RwLock<ConfigData>>>,
-        //prior_steps: &HashMap<String, TestStepResult>,
+    pub async fn run(&self) -> TestResult {
+        let mut prior_steps: HashMap<String, TestStepResult> = HashMap::new();
 
-        let prior_steps: HashMap<String, TestStepResult> = HashMap::new();
+        if let (Some(setup_id), Some(cfg)) = (self.setup.clone(), &self.config) {
+            match cfg.read().unwrap().get_step_group(setup_id.clone()) {
+                Ok(setup) => match setup.run(&self.config, &prior_steps).await {
+                    Ok(result) => {
+                        prior_steps.insert("setup".to_string(), result);
+                    }
+                    Err(e) => {
+                        return TestResult::make_failure_from_error(
+                            &self.name,
+                            &self.path,
+                            Some("setup".to_string()),
+                            TestStepFailureReason::Miscellaneous,
+                            "Step Failed to Run".to_string(),
+                            e,
+                        );
+                    }
+                },
+                Err(e) => {
+                    return TestResult::make_failure_from_error(
+                        &self.name,
+                        &self.path,
+                        Some("setup".to_string()),
+                        TestStepFailureReason::SharedStepNotFoundError,
+                        "Step Group Not Found".to_string(),
+                        e,
+                    );
+                }
+            }
+        }
 
-        for step in self.steps.iter_mut() {
+        for step in self.steps.iter() {
             let real_step = step.read().unwrap();
-            println!("Running Step");
+            // println!("Running Step");
             match real_step.run(&self.config, &prior_steps).await {
                 Ok(result) => {
                     if result.status != TestStepFailureReason::NoFailure {
-                        if let Some(emsg) = result.failure_message {
-                            println!("Error");
-                            println!("{}", emsg);
-                        }
+                        return TestResult::make_failure(&self.name, &self.path, result);
                     } else {
-                        println!("Success");
+                        if let Some(id) = real_step.get_id() {
+                            prior_steps.insert(id.clone(), result);
+                        }
                     }
                 }
                 Err(e) => {
-                    println!("ERROR");
-                    eprintln!("{}", e);
+                    let mut step_id: Option<String> = None;
+                    if let Some(actual_step_id) = real_step.get_id() {
+                        step_id = Some(actual_step_id.clone());
+                    }
+                    return TestResult::make_failure_from_error(
+                        &self.name,
+                        &self.path,
+                        step_id,
+                        TestStepFailureReason::Miscellaneous,
+                        "Step Failed to Run".to_string(),
+                        e,
+                    );
                 }
             }
-            //step.run();
+        }
+
+        if let (Some(teardown_id), Some(cfg)) = (self.teardown.clone(), &self.config) {
+            //println!("Running Setup");
+            match cfg.read().unwrap().get_step_group(teardown_id.clone()) {
+                Ok(teardown) => match teardown.run(&self.config, &prior_steps).await {
+                    Ok(result) => {
+                        prior_steps.insert("teardown".to_string(), result);
+                    }
+                    Err(e) => {
+                        return TestResult::make_failure_from_error(
+                            &self.name,
+                            &self.path,
+                            Some("teardown".to_string()),
+                            TestStepFailureReason::Miscellaneous,
+                            "Test Failed to Run".to_string(),
+                            e,
+                        );
+                    }
+                },
+                Err(e) => {
+                    return TestResult::make_failure_from_error(
+                        &self.name,
+                        &self.path,
+                        Some("teardown".to_string()),
+                        TestStepFailureReason::SharedStepNotFoundError,
+                        "Step Group Not Found".to_string(),
+                        e,
+                    );
+                }
+            }
+        }
+        TestResult {
+            test_name: self.name.clone(),
+            test_path: self.path.clone(),
+            failing_step: None,
+            success: true,
         }
     }
 }

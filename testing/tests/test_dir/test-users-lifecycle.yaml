@@ -1,0 +1,148 @@
+
+test-create-user-fields:
+  steps:
+    - path: /api/user/create
+      method: POST
+      data:
+        username: lifecycle-user-001
+        password: lifecycle-pass-001!
+      assert:
+        status-code: 200
+        body:
+          token: +str
+          len(token): '<=20'
+
+test-duplicate-username:
+  steps:
+    - path: /api/user/create
+      method: POST
+      data:
+        username: duplicate-test-user
+        password: pass123!
+      assert:
+        status-code: 200
+    - path: /api/user/create
+      method: POST
+      data:
+        username: duplicate-test-user
+        password: different-password!
+      assert:
+        status-code: 409
+
+test-get-own-profile:
+  steps:
+    - id: create-profile-user
+      path: /api/user/create
+      method: POST
+      data:
+        username: profile-user-001
+        password: profilepass123!
+    - path: /api/user
+      method: GET
+      headers:
+        API-Token: $create-profile-user.response.token
+      assert:
+        status-code: 200
+        body:
+          name: profile-user-001
+          id: +int
+          posts: +arr
+
+test-get-user-by-username:
+  steps:
+    - id: create-named-user
+      path: /api/user/create
+      method: POST
+      data:
+        username: named-user-001
+        password: namedpass123!
+    - path: /api/user/named-user-001
+      assert:
+        status-code: 200
+        body:
+          name: +str
+          id: +int
+          posts: +arr
+
+test-get-nonexistent-user:
+  steps:
+    - path: /api/user/nobody-xyz-9999
+      assert:
+        status-code: 404
+
+test-update-and-verify:
+  steps:
+    - id: create-upd-user
+      path: /api/user/create
+      method: POST
+      data:
+        username: update-test-user-001
+        password: updatepass123!
+    - path: /api/user
+      method: PUT
+      headers:
+        API-Token: $create-upd-user.response.token
+      data:
+        username: update-test-user-001-renamed
+      assert:
+        status-code: 200
+        body:
+          body: "Username updated successfully"
+    - path: /api/user
+      method: GET
+      headers:
+        API-Token: $create-upd-user.response.token
+      assert:
+        status-code: 200
+        body:
+          name: update-test-user-001-renamed
+
+test-delete-user:
+  steps:
+    - id: create-eph-user
+      path: /api/user/create
+      method: POST
+      data:
+        username: ephemeral-del-user
+        password: ephpass123!
+      assert:
+        status-code: 200
+    - path: /api/user
+      method: DELETE
+      headers:
+        API-Token: $create-eph-user.response.token
+      assert:
+        status-code: 200
+        body:
+          success: true
+    - path: /api/user/ephemeral-del-user
+      assert:
+        status-code: 404
+
+test-login-and-use-token:
+  steps:
+    - path: /api/user/create
+      method: POST
+      data:
+        username: login-test-user
+        password: loginpass123!
+      assert:
+        status-code: 200
+    - id: login
+      path: /api/user/login
+      method: POST
+      data:
+        username: login-test-user
+        password: loginpass123!
+      assert:
+        status-code: 200
+        body:
+          token: +str
+    - path: /api/user
+      method: GET
+      headers:
+        API-Token: $login.response.token
+      assert:
+        status-code: 200
+        body:
+          name: login-test-user

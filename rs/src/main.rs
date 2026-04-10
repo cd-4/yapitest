@@ -1,12 +1,14 @@
-use anyhow::{Error, Result, anyhow};
+use anyhow::{Result, anyhow};
 use clap::{ArgAction, Parser};
+use colored::*;
 use std::collections::HashMap;
-use std::env;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::rc::Rc;
-use std::sync::{Arc, Mutex, RwLock};
-use walkdir::WalkDir;
+use std::io::{self, Write};
+use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
+use std::sync::mpsc;
+use std::thread;
+use std::time::SystemTime;
+use tokio::runtime::Runtime;
 
 mod config;
 mod test;
@@ -14,20 +16,12 @@ mod test_step;
 
 use crate::config::ConfigData;
 use crate::test::Test;
+use crate::test::TestResult;
+use crate::test::print_test_results;
 
 fn is_yaml(path: &PathBuf) -> bool {
     if let Some(extension) = path.extension() {
         return extension == "yaml" || extension == "yml";
-    }
-    false
-}
-
-fn is_config_file(path: &PathBuf) -> bool {
-    if !is_yaml(path) {
-        return false;
-    }
-    if let Some(stem) = path.file_stem() {
-        return stem == "config" || stem == "yapitest-config";
     }
     false
 }
@@ -61,31 +55,6 @@ fn is_root_dir(path: &PathBuf) -> bool {
     false
 }
 
-fn try_load_file(path: &PathBuf) -> (Vec<Test>, Option<ConfigData>) {
-    /*
-        if is_test_file(path) {
-            // Try Load Test
-            if let Some(basename) = path.file_name() {
-                let (config, tests) = Test::load_test_file(path);
-                //println!("Test: {}", path.display());
-                return (tests, config);
-            }
-        } else if is_config_file(path) {
-            // Try Load Config File
-            if let Some(basename) = path.file_name() {
-                println!("Config: {}", path.display());
-                let new_config = ConfigData::from_file(None, path);
-                if !new_config.is_some() {
-                    println!("CONFIG FAILED TO LOAD");
-                }
-                return (vec![], new_config);
-            }
-        }
-    */
-
-    (vec![], None)
-}
-
 #[derive(Parser, Debug)]
 #[command(version, about = "Simple example with positional args")]
 struct Args {
@@ -99,6 +68,9 @@ struct Args {
 
     #[arg(short = 'i', action = ArgAction::Append)]
     include: Vec<String>,
+
+    #[arg(short = 't')]
+    threads: Option<u64>,
 }
 
 fn get_config_in_dir(path: &PathBuf) -> Result<Option<ConfigData>> {
@@ -247,15 +219,84 @@ fn load_tests(
     }
 }
 
-async fn run_tests(tests: &mut Vec<Test>) {
-    for test in tests.iter_mut() {
-        println!("-----------------------------");
-        let _x = test.run().await;
+async fn run_tests_thread(tests: &Vec<Test>) -> Vec<TestResult> {
+    let mut output: Vec<TestResult> = vec![];
+    for test in tests.iter() {
+        let result = test.run().await;
+        if result.passed() {
+            println!("  {}  {}", "PASS".green(), result.name());
+        } else {
+            println!("  {}  {}", "FAIL".red().bold(), result.name());
+        }
+        io::stdout().flush().unwrap();
+        output.push(result);
     }
+    output
+}
+
+async fn run_tests(tests: &Vec<Test>, threads: Option<u64>) -> Vec<TestResult> {
+    let num_threads = threads.unwrap_or(1);
+
+    if num_threads == 1 {
+        return run_tests_thread(tests).await;
+    }
+
+    // Group tests by source file before distributing to threads. Tests in the
+    // same file share state through config step-sets (e.g. `once: true` groups
+    // like `create-user`), so they must run sequentially on the same thread to
+    // avoid concurrent mutations of shared API state.
+    let mut file_order: Vec<PathBuf> = Vec::new();
+    let mut file_groups: HashMap<PathBuf, Vec<Test>> = HashMap::new();
+
+    for test in tests.iter() {
+        if !file_groups.contains_key(test.path()) {
+            file_order.push(test.path().clone());
+        }
+        file_groups
+            .entry(test.path().clone())
+            .or_default()
+            .push(test.clone());
+    }
+
+    // Distribute whole file groups round-robin across threads.
+    // Cap thread count at the number of distinct files.
+    let actual_threads = (num_threads as usize).min(file_order.len());
+    let mut thread_groups: Vec<Vec<Test>> = (0..actual_threads).map(|_| Vec::new()).collect();
+
+    for (i, path) in file_order.into_iter().enumerate() {
+        if let Some(group) = file_groups.remove(&path) {
+            thread_groups[i % actual_threads].extend(group);
+        }
+    }
+
+    let (tx, rx) = mpsc::channel::<Vec<TestResult>>();
+
+    thread::scope(|s| {
+        for group in thread_groups {
+            let tx_clone = tx.clone();
+            s.spawn(move || {
+                let rt = Runtime::new().expect("Failed to create runtime");
+                let group_results = rt.block_on(async { run_tests_thread(&group).await });
+                let _ = tx_clone.send(group_results);
+            });
+        }
+
+        drop(tx);
+    });
+
+    let mut all_results: Vec<TestResult> = Vec::new();
+
+    while let Ok(group_results) = rx.recv() {
+        all_results.extend(group_results);
+    }
+
+    all_results
 }
 
 #[tokio::main]
 async fn main() {
+    let start_time = SystemTime::now();
+
     let args = Args::parse();
 
     let mut test_paths: Vec<PathBuf> = Vec::new();
@@ -268,7 +309,7 @@ async fn main() {
                     test_paths.push(p);
                 }
                 Err(e) => {
-                    panic!("Error Unwrapping Path {}", path_arg);
+                    panic!("Error Unwrapping Path {}: {}", path_arg, e);
                 }
             }
         } else {
@@ -276,9 +317,13 @@ async fn main() {
         }
     }
 
+    let divider = "─".repeat(40);
+    println!("yapitest v{}", env!("CARGO_PKG_VERSION"));
+    println!("{}", divider.dimmed());
+
     let mut configs: HashMap<PathBuf, Arc<RwLock<ConfigData>>> = HashMap::new();
     let mut tests: Vec<Test> = vec![];
-    println!("Collecting Tests...");
+    println!("{}", "Collecting tests...".dimmed());
     for path in test_paths.iter() {
         match load_tests(&mut configs, path) {
             Ok(found_tests) => {
@@ -325,6 +370,14 @@ async fn main() {
         tests.retain(|t| !contains_text(t, &excludes));
     }
 
-    println!("Collected {} Tests", tests.len());
-    run_tests(&mut tests).await;
+    println!("{}", format!("Found {} tests", tests.len()).dimmed());
+    println!();
+    let test_results = run_tests(&tests, args.threads).await;
+    let end_time = SystemTime::now();
+    let duration = end_time
+        .duration_since(start_time)
+        .expect("Time went backwards")
+        .as_secs_f32();
+    println!();
+    print_test_results(&test_results, duration);
 }

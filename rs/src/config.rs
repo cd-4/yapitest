@@ -1,14 +1,16 @@
-use crate::test_step::{RunnableTestStep, TestStep, TestStepResult, TestStepSpec, TestStepStatus};
+use crate::test_step::{RunnableTestStep, TestStep, TestStepResult, TestStepSpec};
 use anyhow::{Error, Result, anyhow};
 use async_trait::async_trait;
+use dashmap::DashMap;
+use lazy_static::lazy_static;
 use serde::Deserialize;
 use serde_yaml::{Value, from_value};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
-use std::rc::Rc;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
+use tokio::sync::OnceCell;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -18,36 +20,21 @@ pub struct TestStepGroupSpec {
     once: Option<bool>,
 }
 
+#[derive(Clone)]
 pub struct TestStepGroup {
-    id: Option<String>,
+    id: String,
     steps: Vec<Arc<dyn RunnableTestStep + Send + Sync>>,
-    status: TestStepStatus,
+    outputs: HashMap<String, String>,
     run_once: bool,
-    has_run: bool,
+    path: PathBuf,
 }
 
 pub struct TestStepGroupReference {
     id: String,
-    status: TestStepStatus,
-}
-
-pub fn get_depth(key_vec: Vec<String>, value: Value) -> Result<Value> {
-    let mut cur_val = &value;
-    for key in key_vec.iter() {
-        match cur_val.get(key) {
-            Some(val) => {
-                cur_val = val;
-            }
-            None => {
-                return Err(anyhow!("{} not found", key_vec.join(".")));
-            }
-        }
-    }
-    Ok(cur_val.clone())
 }
 
 impl TestStepGroup {
-    pub fn from_spec(id: String, spec: TestStepGroupSpec) -> TestStepGroup {
+    pub fn from_spec(id: String, spec: TestStepGroupSpec, path: &PathBuf) -> TestStepGroup {
         let mut once = false;
         if let Some(run_once) = spec.once
             && run_once
@@ -67,18 +54,91 @@ impl TestStepGroup {
         }
 
         TestStepGroup {
-            id: Some(id),
+            id,
             steps,
-            status: TestStepStatus::NotRun,
             run_once: once,
-            has_run: false,
+            outputs: spec.output,
+            path: path.clone(),
         }
     }
-}
 
-pub struct ConfigVariable {
-    value: Option<String>,
-    env_var_name: Option<String>,
+    pub fn runs_once(&self) -> bool {
+        return self.run_once;
+    }
+
+    pub fn get_group_id(&self) -> String {
+        return format!("{}:{}", self.path.display(), self.id);
+    }
+
+    pub async fn run_internal(
+        &self,
+        config: &Option<Arc<RwLock<ConfigData>>>,
+        prior_steps: &HashMap<String, TestStepResult>,
+    ) -> Result<TestStepResult> {
+        // Run Steps
+        let mut local_steps: HashMap<String, TestStepResult> = HashMap::new();
+        for step in self.steps.iter() {
+            match step.run(config, prior_steps).await {
+                Ok(result) => {
+                    if let Some(id) = step.get_id() {
+                        local_steps.insert(id.clone(), result);
+                    }
+                }
+                Err(e) => {
+                    return Err(anyhow!("Error running step: {}", e));
+                }
+            }
+        }
+
+        // Process Outputs
+        let mut outputs: HashMap<String, serde_json::Value> = HashMap::new();
+
+        for (output_key, output_value) in self.outputs.iter() {
+            if output_value.starts_with('$') {
+                let mut output_str_copy = output_value.clone();
+                output_str_copy.remove(0);
+
+                let mut output_sections: Vec<String> =
+                    output_str_copy.split('.').map(|v| v.to_string()).collect();
+
+                let mut step_id: String = "".to_string();
+
+                if let Some(step_id_val) = output_sections.get(0) {
+                    step_id = step_id_val.clone();
+                } else {
+                    return Err(anyhow!("Invalid Step Reference: {}", output_value));
+                }
+
+                if let Some(step) = local_steps.get(&step_id) {
+                    output_sections.remove(0);
+                    let field_key = output_sections.join(".");
+                    if let Ok(val) = step.get_field(field_key.clone()) {
+                        if let Some(yaml_val) = val {
+                            if let Ok(v) = serde_json::from_value(yaml_val) {
+                                outputs.insert(output_key.clone(), v);
+                                continue;
+                            }
+                        }
+                        return Err(anyhow!(
+                            "Field {} not found in step {}",
+                            output_key,
+                            step_id,
+                        ));
+                    }
+                } else {
+                    return Err(anyhow!("Step {} not found.", step_id));
+                }
+            }
+        }
+
+        let result = TestStepResult::make_success(
+            Some(self.id.clone()),
+            serde_yaml::from_value(Value::Null)?,
+            serde_yaml::from_value(Value::Null)?,
+            serde_json::to_value(outputs)?,
+        );
+        Ok(result)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -98,6 +158,20 @@ pub struct ConfigData {
 }
 
 impl ConfigData {
+    pub fn get_step_group(&self, step_group_key: String) -> Result<TestStepGroup> {
+        if let Some(step_group) = self.step_sets.as_ref().and_then(|v| v.get(&step_group_key)) {
+            return Ok(step_group.clone());
+        }
+
+        if let Some(parent) = &self.parent {
+            let r = parent.read();
+            let u = r.unwrap();
+            let step_group = u.get_step_group(step_group_key)?;
+            return Ok(step_group.clone());
+        }
+        Err(anyhow!("Step Group {} Not Found", step_group_key))
+    }
+
     pub fn get_string_value(&self, key: String) -> Result<String> {
         let string_keys: Vec<String> = key.split('.').map(|v| v.to_string()).collect();
         if string_keys[0] == "urls" {
@@ -175,7 +249,7 @@ impl ConfigData {
             step_sets = Some(
                 step_set_specs
                     .into_iter()
-                    .map(|(k, v)| (k.clone(), TestStepGroup::from_spec(k.clone(), v)))
+                    .map(|(k, v)| (k.clone(), TestStepGroup::from_spec(k.clone(), v, path)))
                     .collect(),
             )
         }
@@ -221,16 +295,6 @@ impl ConfigData {
         }
     }
 
-    pub fn spec_from_value(value: Value) -> Option<ConfigSpec> {
-        match from_value::<ConfigSpec>(value.clone()) {
-            Ok(config_spec) => Some(config_spec),
-            Err(e) => {
-                eprintln!("Error Loading Config: {}", e);
-                None
-            }
-        }
-    }
-
     pub fn spec_from_file(path: &PathBuf) -> Result<ConfigSpec> {
         if let Ok(file) = File::open(path) {
             let reader = BufReader::new(file);
@@ -256,44 +320,11 @@ impl ConfigData {
         let spec = ConfigData::spec_from_file(path)?;
         ConfigData::from_spec(path, spec)
     }
-
-    /*
-    pub fn get_step_set(&self, key: String) -> Option<&TestStepGroup> {
-        let retrieved_value = self.step_sets.get(&key);
-        match retrieved_value {
-            Some(_) => {
-                return retrieved_value;
-            }
-            None => match &self.parent {
-                Some(parent) => parent.get_step_set(key),
-                None => None,
-            },
-        }
-    }
-
-    pub fn get_keys(&self, keys: Vec<String>) -> Option<&Value> {
-        let mut current_value = &self.data;
-        for key in keys.iter() {
-            let opt_val = current_value.get(key);
-            match opt_val {
-                Some(val) => {
-                    current_value = val;
-                }
-                None => return None,
-            }
-        }
-
-        Some(current_value)
-    }
-    */
 }
 
 impl TestStepGroupReference {
     pub fn from_id(id: String) -> TestStepGroupReference {
-        TestStepGroupReference {
-            id,
-            status: TestStepStatus::NotRun,
-        }
+        TestStepGroupReference { id }
     }
 }
 
@@ -308,18 +339,24 @@ impl RunnableTestStep for TestStepGroupReference {
         config: &Option<Arc<RwLock<ConfigData>>>,
         prior_steps: &HashMap<String, TestStepResult>,
     ) -> Result<TestStepResult> {
-        Err(anyhow!("SDF"))
+        let cfg = config
+            .as_ref()
+            .ok_or_else(|| anyhow!("No config available to resolve step group '{}'", self.id))?;
+        let step_group = cfg.read().unwrap().get_step_group(self.id.clone())?;
+        step_group.run(config, prior_steps).await
     }
+}
 
-    fn get_status(&self) -> TestStepStatus {
-        self.status
-    }
+lazy_static! {
+    static ref GROUP_TEST_RESULTS: DashMap<String, TestStepResult> = DashMap::new();
+    static ref GROUP_INIT: DashMap<String, Arc<tokio::sync::Mutex<()>>> = DashMap::new();
+    static ref GROUP_ONCE: DashMap<String, Arc<OnceCell<TestStepResult>>> = DashMap::new();
 }
 
 #[async_trait]
 impl RunnableTestStep for TestStepGroup {
     fn get_id(&self) -> Option<&String> {
-        self.id.as_ref()
+        Some(&self.id)
     }
 
     async fn run(
@@ -327,23 +364,32 @@ impl RunnableTestStep for TestStepGroup {
         config: &Option<Arc<RwLock<ConfigData>>>,
         prior_steps: &HashMap<String, TestStepResult>,
     ) -> Result<TestStepResult> {
-        let mut local_steps: HashMap<String, TestStepResult> = HashMap::new();
-        for step in self.steps.iter() {
-            match step.run(config, prior_steps).await {
-                Ok(result) => {
-                    if let Some(id) = step.get_id() {
-                        local_steps.insert(id.clone(), result);
-                    }
-                }
-                Err(e) => {
-                    return Err(e);
-                }
-            }
-        }
-        Err(anyhow!("Error"))
-    }
+        let test_group_id = self.get_group_id();
 
-    fn get_status(&self) -> TestStepStatus {
-        self.status
+        if !self.runs_once() {
+            return self.run_internal(config, prior_steps).await;
+        }
+
+        if let Some(result) = GROUP_TEST_RESULTS.get(&test_group_id) {
+            return Ok(result.value().clone());
+        }
+
+        let init_lock = GROUP_INIT
+            .entry(test_group_id.clone())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .value()
+            .clone();
+
+        let _guard = init_lock.lock().await;
+
+        if let Some(result) = GROUP_TEST_RESULTS.get(&test_group_id) {
+            return Ok(result.value().clone());
+        }
+
+        let result = self.run_internal(config, prior_steps).await?;
+
+        GROUP_TEST_RESULTS.insert(test_group_id, result.clone());
+
+        Ok(result)
     }
 }

@@ -1,30 +1,25 @@
 use crate::config::ConfigData;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use regex::Regex;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Method};
 use serde::Deserialize;
-use serde_json::Value;
+
+use serde_json::{Map, Value};
 use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum TestStepFailureReason {
     NoFailure,
-    NoResponse,
     ResponseError,
     StatusCodeError,
     JsonDecodeError,
     ConfigurationError,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum TestStepStatus {
-    NotRun,
-    InProgress,
-    Pass,
-    Fail,
+    SharedStepNotFoundError,
+    Miscellaneous,
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,18 +40,6 @@ pub struct TestStepSpec {
     headers: Option<HashMap<String, String>>,
     data: Option<Value>,
     assert: Option<TestStepAssertionSpec>,
-    output: Option<HashMap<String, String>>,
-}
-
-impl Display for TestStepStatus {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match self {
-            TestStepStatus::Pass => write!(f, "Pass"),
-            TestStepStatus::InProgress => write!(f, "In Progress"),
-            TestStepStatus::Fail => write!(f, "Fail"),
-            TestStepStatus::NotRun => write!(f, "Not Run"),
-        }
-    }
 }
 
 pub struct TestStep {
@@ -69,39 +52,575 @@ pub struct TestStep {
     expected_response_data: Option<Value>,
     expected_status_code: Option<Value>,
     allow_missing_fields: bool,
-    status: TestStepStatus,
-    failure_reason: TestStepFailureReason,
 }
 
+#[derive(Debug)]
 pub struct TestStepResult {
-    response_data: Option<Value>,
-    request_data: Option<Value>,
-    output_data: Option<Value>,
+    step_id: Option<String>,
+    pub response_data: Option<Value>,
+    pub request_data: Option<Value>,
+    pub output_data: Option<Value>,
     pub status: TestStepFailureReason,
     pub failure_message: Option<String>,
 }
 
-pub fn clean_data(
-    value: &Value,
-    config: &ConfigData,
+impl Clone for TestStepResult {
+    fn clone(&self) -> Self {
+        let mut response_data: Option<Value> = None;
+        let mut request_data: Option<Value> = None;
+        let mut output_data: Option<Value> = None;
+        let mut failure_message: Option<String> = None;
+        let mut step_id: Option<String> = None;
+
+        if let Some(x) = &self.response_data {
+            response_data = Some(x.clone());
+        }
+
+        if let Some(x) = &self.request_data {
+            request_data = Some(x.clone());
+        }
+
+        if let Some(x) = &self.output_data {
+            output_data = Some(x.clone());
+        }
+
+        if let Some(x) = &self.failure_message {
+            failure_message = Some(x.clone());
+        }
+
+        if let Some(id) = &self.step_id {
+            step_id = Some(id.clone());
+        }
+
+        TestStepResult {
+            step_id,
+            response_data,
+            request_data,
+            output_data,
+            status: self.status,
+            failure_message,
+        }
+    }
+}
+
+pub fn get_variable(
+    name: String,
+    config: &Option<Arc<RwLock<ConfigData>>>,
     prior_steps: &HashMap<String, TestStepResult>,
 ) -> Result<Value> {
-    for (key, val) in value.iter() {
-        if let Some(v) = val.as_object() {}
+    if !name.starts_with('$') {
+        return Ok(Value::String(name));
+    }
+    let mut current_key = name.clone();
+    'outer: while current_key.starts_with('$') {
+        let mut value_key = current_key.clone();
+        value_key.remove(0);
+
+        if let Some(cfg) = config {
+            if let Ok(new_val) = cfg.read().unwrap().get_string_value(value_key.clone()) {
+                current_key = new_val;
+                if current_key.starts_with('$') {
+                    continue 'outer;
+                } else {
+                    return Ok(Value::from(current_key));
+                }
+            }
+        }
+
+        let mut segments: Vec<String> = value_key
+            .clone()
+            .split('.')
+            .map(|v| v.to_string())
+            .collect();
+
+        if let Some(step) = segments.first().and_then(|v| prior_steps.get(v)) {
+            segments.remove(0);
+            let field_key = segments.join(".");
+            match step.get_field(field_key.clone()) {
+                Ok(field_val) => {
+                    if let Some(val) = field_val {
+                        if let Some(value_str) = val.as_str() {
+                            if value_str.starts_with("$") {
+                                current_key = value_str.to_string();
+                                continue 'outer;
+                            }
+                        }
+                        return Ok(val);
+                    } else {
+                        return Err(anyhow!("Value {} not found", field_key));
+                    }
+                }
+                Err(e) => {
+                    return Err(anyhow!("Value {} not found", field_key));
+                }
+            }
+        }
+
+        return Err(anyhow!("2 Value not found: {}", name));
+    }
+    Err(anyhow!("3 Value not found: {}", name))
+}
+
+pub fn clean_request_data(
+    request_data: &Value,
+    config: &Option<Arc<RwLock<ConfigData>>>,
+    prior_steps: &HashMap<String, TestStepResult>,
+) -> Result<Value> {
+    if let Some(data_map) = request_data.as_object() {
+        let mut new_value = data_map.clone();
+        for (k, v) in data_map.iter() {
+            match clean_request_data(v, config, prior_steps) {
+                Ok(val) => {
+                    new_value.insert(k.clone(), val);
+                }
+                Err(e) => {
+                    return Err(e);
+                }
+            }
+        }
+        Ok(Value::from(new_value))
+    } else if let Some(data_arr) = request_data.as_array() {
+        let mut new_val: Vec<Value> = data_arr.clone();
+        for item in data_arr.iter() {
+            match clean_request_data(item, config, prior_steps) {
+                Ok(val) => {
+                    new_val.push(val);
+                }
+                Err(e) => {
+                    return Err(e);
+                }
+            }
+        }
+        Ok(Value::from(new_val))
+    } else if let Some(data_str) = request_data.as_str() {
+        if data_str.starts_with("$") {
+            match get_variable(data_str.to_string(), config, prior_steps) {
+                Ok(var) => Ok(var),
+                Err(e) => Err(e),
+            }
+        } else {
+            Ok(Value::from(data_str))
+        }
+    } else {
+        Ok(request_data.clone())
+    }
+}
+
+pub fn clean_path(
+    path: String,
+    config: &Option<Arc<RwLock<ConfigData>>>,
+    prior_steps: &HashMap<String, TestStepResult>,
+) -> Result<String> {
+    let ends_with_slash = path.ends_with("/");
+
+    let mut segments: Vec<String> = vec![];
+
+    for segment in path.split("/") {
+        if segment.starts_with("$") {
+            let new_seg = get_variable(segment.to_string(), config, prior_steps)?;
+            if let Some(seg_str) = new_seg.as_str() {
+                segments.push(seg_str.to_string());
+            } else if let Some(seg_int) = new_seg.as_i64() {
+                segments.push(format!("{}", seg_int));
+            } else {
+                return Err(anyhow!("Variable {} not of type string", segment));
+            }
+        } else {
+            segments.push(segment.to_string());
+        }
+    }
+    let mut output = segments.join("/");
+    output.insert(0, '/');
+    if ends_with_slash {
+        output.push('/');
+    }
+    Ok(output)
+}
+
+pub fn clean_headers(
+    header_data: &HashMap<String, String>,
+    config: &Option<Arc<RwLock<ConfigData>>>,
+    prior_steps: &HashMap<String, TestStepResult>,
+) -> Result<HeaderMap> {
+    let mut output: HeaderMap = HeaderMap::new();
+    for (k, v) in header_data.iter() {
+        if v.starts_with("$") {
+            match get_variable(v.to_string(), config, prior_steps) {
+                Ok(header_value) => {
+                    if let Some(header_str) = header_value.as_str() {
+                        let name = HeaderName::from_bytes(k.as_bytes()).unwrap();
+                        let val = HeaderValue::from_str(header_str).unwrap();
+                        output.insert(name, val);
+                    } else {
+                        return Err(anyhow!("Invalid Header {}: {}", k, v));
+                    }
+                }
+                Err(e) => {
+                    return Err(anyhow!("Invalid Header {}: {} ({})", k, v, e));
+                }
+            }
+        } else {
+            let name = HeaderName::from_bytes(k.as_bytes()).unwrap();
+            let val = HeaderValue::from_str(v).unwrap();
+            output.insert(name, val);
+        }
+    }
+    Ok(output)
+}
+
+#[derive(Debug, PartialEq)]
+enum Operator {
+    Gt,  // >
+    Gte, // >=
+    Lt,  // <
+    Lte, // <=
+    Eq,  // =
+}
+
+#[derive(Debug, PartialEq)]
+struct Comparison {
+    op: Operator,
+    value: i64, // or f64 if you need floats
+}
+
+fn parse_comparison(s: &str) -> Result<Comparison, String> {
+    // Matches optional spaces around the operator and number
+    let re = Regex::new(r"^\s*([<>]=?|=?)\s*(\d+)\s*$").map_err(|e| e.to_string())?;
+
+    let caps = re
+        .captures(s.trim())
+        .ok_or_else(|| format!("Invalid comparison format: '{}'", s))?;
+
+    let op_str = caps.get(1).unwrap().as_str();
+    let num_str = caps.get(2).unwrap().as_str();
+
+    let op = match op_str {
+        ">" => Operator::Gt,
+        ">=" => Operator::Gte,
+        "<" => Operator::Lt,
+        "<=" => Operator::Lte,
+        "=" | "" => Operator::Eq, // allow "=" or even just the number (treat as =)
+        _ => return Err(format!("Unknown operator: {}", op_str)),
+    };
+
+    let value: i64 = num_str.parse::<i64>().map_err(|e| e.to_string())?;
+
+    Ok(Comparison { op, value })
+}
+
+pub fn get_value_length(val: &Value) -> Result<i64> {
+    if let Some(value_str) = val.as_str() {
+        return Ok(value_str.len() as i64);
+    } else if let Some(value_arr) = val.as_array() {
+        return Ok(value_arr.len() as i64);
+    } else if let Some(value_obj) = val.as_object() {
+        return Ok(value_obj.len() as i64);
+    }
+
+    Err(anyhow!("Size could not be determined for {}", val))
+}
+
+pub fn check_size(val: &Value, size_str: String) -> Result<bool> {
+    let value_size = get_value_length(val)?;
+
+    match parse_comparison(&size_str) {
+        Ok(cmp) => match cmp.op {
+            Operator::Gt => {
+                return Ok(value_size > cmp.value);
+            }
+            Operator::Lt => {
+                return Ok(value_size < cmp.value);
+            }
+            Operator::Eq => {
+                return Ok(value_size == cmp.value);
+            }
+            Operator::Gte => {
+                return Ok(value_size >= cmp.value);
+            }
+            Operator::Lte => {
+                return Ok(value_size <= cmp.value);
+            }
+        },
+        Err(e) => {
+            return Err(anyhow!("Unable to pare comparison: {}", e));
+        }
+    }
+}
+
+pub fn compare_data_objects(
+    observed_object: &Map<String, Value>,
+    expected_object: &Map<String, Value>,
+    full: bool,
+    keys: String,
+    config: &Option<Arc<RwLock<ConfigData>>>,
+    prior_steps: &HashMap<String, TestStepResult>,
+) -> Result<()> {
+    // Check every expected key is present and matches in the observed response.
+    // Iterating expected (not observed) ensures missing fields are caught.
+    for key in expected_object.keys() {
+        let expected = expected_object.get(key).unwrap();
+
+        // `len(field)` keys are size assertions handled in the observed pass below.
+        if key.starts_with("len(") && key.ends_with(')') {
+            continue;
+        }
+
+        let observed = match observed_object.get(key) {
+            Some(v) => v,
+            None => {
+                return Err(anyhow!(
+                    "Expected field '{}.{}' not found in response",
+                    keys,
+                    key
+                ));
+            }
+        };
+
+        compare_data_inner(
+            observed,
+            expected,
+            full,
+            format!("{}.{}", keys, key),
+            config,
+            prior_steps,
+        )?;
+    }
+
+    // Walk observed keys for `len(field)` size checks and the `full` mode check
+    // (no unexpected extra fields in the response).
+    for key in observed_object.keys() {
+        let observed = observed_object.get(key).unwrap();
+
+        let size_str = format!("len({})", key);
+        if let Some(expected_size) = expected_object.get(&size_str) {
+            match check_size(observed, expected_size.as_str().unwrap().to_string()) {
+                Ok(is_correct_size) => {
+                    if !is_correct_size {
+                        return Err(anyhow!(
+                            "Incorrect Size: len({}.{}) !{}",
+                            keys,
+                            key,
+                            expected_size
+                        ));
+                    }
+                }
+                Err(_) => {
+                    return Err(anyhow!("Error checking size for {}.{}", keys, key));
+                }
+            }
+        } else if full && !expected_object.contains_key(key) {
+            return Err(anyhow!(
+                "'full' is set and unexpected field '{}.{}' was found in response",
+                keys,
+                key
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+pub fn compare_array_objects(
+    observed_object: &Vec<Value>,
+    expected_object: &Vec<Value>,
+    full: bool,
+    keys: String,
+    config: &Option<Arc<RwLock<ConfigData>>>,
+    prior_steps: &HashMap<String, TestStepResult>,
+) -> Result<()> {
+    let num_expected = expected_object.len();
+    let num_observed = observed_object.len();
+    if num_expected != num_observed {
+        return Err(anyhow!(
+            "Expected {} items in {}. Found {}",
+            num_expected,
+            keys,
+            num_observed
+        ));
+    }
+
+    for (index, (observed, expected)) in observed_object
+        .iter()
+        .zip(expected_object.iter())
+        .enumerate()
+    {
+        let new_keys = format!("{}.[{}]", keys, index);
+        compare_data_inner(observed, expected, full, new_keys, config, prior_steps)?;
+    }
+
+    Ok(())
+}
+
+fn value_type_name(v: &Value) -> &'static str {
+    if v.is_null() {
+        "Null"
+    } else if v.is_boolean() {
+        "Bool"
+    } else if v.is_number() {
+        "Number"
+    } else if v.is_string() {
+        "String"
+    } else if v.is_array() {
+        "Array"
+    } else if v.is_object() {
+        "Object"
+    } else {
+        "Unknown" // should never happen
+    }
+}
+
+fn value_eq(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        // Same type → normal comparison
+        (Value::Null, Value::Null) => true,
+        (Value::Bool(x), Value::Bool(y)) => x == y,
+        (Value::Number(x), Value::Number(y)) => x == y,
+        (Value::String(x), Value::String(y)) => x == y,
+        (Value::Array(x), Value::Array(y)) => {
+            x.len() == y.len() && x.iter().zip(y.iter()).all(|(xa, ya)| value_eq(xa, ya))
+        }
+        (Value::Object(x), Value::Object(y)) => {
+            if x.len() != y.len() {
+                return false;
+            }
+            x.iter()
+                .all(|(k, v)| y.get(k).map_or(false, |yv| value_eq(v, yv)))
+        }
+
+        _ => false,
+    }
+}
+
+pub fn compare_primitive_values(
+    observed: &Value,
+    expected: &Value,
+    keys: String,
+    config: &Option<Arc<RwLock<ConfigData>>>,
+    prior_steps: &HashMap<String, TestStepResult>,
+) -> Result<()> {
+    if let Some(exp_str) = expected.as_str() {
+        if exp_str.starts_with('+') {
+            let mut exp_type = exp_str.to_string();
+            exp_type.remove(0);
+            if (exp_type == "str" || exp_type == "string") {
+                if observed.as_str().is_none() {
+                    return Err(anyhow!("Expected string for {}", keys));
+                } else {
+                    return Ok(());
+                }
+            } else if (exp_type == "float" || exp_type == "flt") {
+                if observed.as_f64().is_none() {
+                    return Err(anyhow!("Expected float for {}", keys));
+                } else {
+                    return Ok(());
+                }
+            } else if exp_type == "int" {
+                if observed.as_i64().is_none() {
+                    return Err(anyhow!("Expected int for {}", keys));
+                } else {
+                    return Ok(());
+                }
+            } else if exp_type == "bool" {
+                if observed.as_bool().is_none() {
+                    return Err(anyhow!("Expected bool for {}", keys));
+                } else {
+                    return Ok(());
+                }
+            } else if exp_type == "arr" || exp_type == "array" {
+                if observed.as_array().is_none() {
+                    return Err(anyhow!("Expected array for {}", keys));
+                } else {
+                    return Ok(());
+                }
+            } else if exp_type == "dict" || exp_type == "obj" || exp_type == "object" {
+                if observed.as_object().is_none() {
+                    return Err(anyhow!("Expected object for {}", keys));
+                } else {
+                    return Ok(());
+                }
+            }
+        } else if exp_str.starts_with("$") {
+            let exp_var = get_variable(exp_str.to_string(), config, prior_steps)?;
+            if !value_eq(&exp_var, observed) {
+                return Err(anyhow!(
+                    "Value Incorrect for ({}) 1: (Actual:{}, Expected:{})",
+                    keys,
+                    observed,
+                    exp_var,
+                ));
+            } else {
+                return Ok(());
+            }
+        }
+    }
+
+    let expected_type = value_type_name(expected);
+    let observed_type = value_type_name(observed);
+
+    if observed_type != expected_type {
+        return Err(anyhow!(
+            "Expected type {} ({}) | Found type {} ({})",
+            value_type_name(expected),
+            expected,
+            value_type_name(observed),
+            observed,
+        ));
+    }
+
+    if !value_eq(observed, expected) {
+        Err(anyhow!(
+            "Value Incorrect for ({}) 2: (Actual:{}, Expected:{})",
+            keys,
+            observed,
+            expected,
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+pub fn compare_data_inner(
+    observed: &Value,
+    expected: &Value,
+    full: bool,
+    keys: String,
+    config: &Option<Arc<RwLock<ConfigData>>>,
+    prior_steps: &HashMap<String, TestStepResult>,
+) -> Result<()> {
+    if let (Some(obs_obj), Some(exp_obj)) = (observed.as_object(), expected.as_object()) {
+        compare_data_objects(obs_obj, exp_obj, full, keys, config, prior_steps)
+    } else if let (Some(obs_arr), Some(exp_arr)) = (observed.as_array(), expected.as_array()) {
+        compare_array_objects(obs_arr, exp_arr, full, keys, config, prior_steps)
+    } else {
+        compare_primitive_values(observed, expected, keys, config, prior_steps)
     }
 }
 
 pub fn compare_data(
     observed: &Value,
     expected: &Value,
-    config: &ConfigData,
+    config: &Option<Arc<RwLock<ConfigData>>>,
     prior_steps: &HashMap<String, TestStepResult>,
+    full: bool,
 ) -> Result<()> {
+    compare_data_inner(
+        observed,
+        expected,
+        full,
+        "".to_string(),
+        config,
+        prior_steps,
+    )
 }
 
 impl TestStepResult {
-    pub fn make_failure(reason: TestStepFailureReason, message: String) -> TestStepResult {
+    pub fn make_failure(
+        step_id: &Option<String>,
+        reason: TestStepFailureReason,
+        message: String,
+    ) -> TestStepResult {
         TestStepResult {
+            step_id: step_id.clone(),
             status: reason,
             response_data: None,
             request_data: None,
@@ -111,11 +630,13 @@ impl TestStepResult {
     }
 
     pub fn make_success(
+        step_id: Option<String>,
         response_data: Value,
         request_data: Value,
         output_data: Value,
     ) -> TestStepResult {
         TestStepResult {
+            step_id,
             status: TestStepFailureReason::NoFailure,
             response_data: Some(response_data),
             request_data: Some(request_data),
@@ -128,13 +649,18 @@ impl TestStepResult {
         let sections: Vec<&str> = keys.split(".").collect();
 
         let mut first = true;
-
         let mut return_value: Option<Value> = None;
+
+        if self.output_data.is_some() {
+            return_value = self.output_data.clone();
+            first = false;
+        }
+
         for section in sections.iter() {
             if first {
                 if *section == "response" {
                     return_value = self.response_data.clone();
-                } else if *section == "request" {
+                } else if *section == "request" || *section == "data" {
                     return_value = self.request_data.clone();
                 } else if *section == "output" {
                     return_value = self.output_data.clone();
@@ -157,99 +683,6 @@ impl TestStepResult {
 }
 
 impl TestStep {
-    fn get_expected_response(
-        &self,
-        config: &Option<Arc<RwLock<ConfigData>>>,
-        expected_res: &Value,
-        prior_steps: &HashMap<String, TestStepResult>,
-    ) -> Result<Value> {
-        if let Some(cfg) = config {
-            return self.get_expected_response_inner(
-                &cfg.read().unwrap(),
-                expected_res,
-                prior_steps,
-            );
-        } else {
-            return Ok(expected_res.clone());
-        }
-    }
-
-    fn get_expected_response_inner(
-        &self,
-        config: &ConfigData,
-        expected_res: &Value,
-        prior_steps: &HashMap<String, TestStepResult>,
-    ) -> Result<Value> {
-        match self.clean_expected_response(config, expected_res, prior_steps) {
-            Ok(response) => {
-                return Ok(response);
-            }
-            Err(e) => {
-                return Err(e);
-            }
-        }
-    }
-
-    fn clean_expected_response(
-        &self,
-        config: &ConfigData,
-        expected_response: &Value,
-        prior_steps: &HashMap<String, TestStepResult>,
-    ) -> Result<Value> {
-        let mut clone_res = expected_response.clone();
-        if let Some(ref mut map) = clone_res.as_object_mut() {
-            let keys: Vec<String> = map.iter().filter_map(|(k, _)| Some(k.clone())).collect();
-
-            for k in keys.iter() {
-                if let Some(value) = map.get_mut(k) {
-                    match self.clean_expected_response(&config, value, prior_steps) {
-                        Ok(new_value) => {
-                            map.insert(k.clone(), new_value);
-                        }
-                        Err(e) => {
-                            return Err(e);
-                        }
-                    }
-                }
-            }
-            return Ok(Value::Object(map.clone()));
-        } else if let Some(ref mut vec) = clone_res.as_array_mut() {
-            // Build a completely new vector from the cleaned items
-            let mut cleaned_vec: Vec<Value> = Vec::with_capacity(vec.len());
-
-            for item in vec.iter_mut() {
-                let cleaned_item = self.clean_expected_response(config, item, prior_steps)?;
-                cleaned_vec.push(cleaned_item);
-            }
-
-            return Ok(Value::Array(cleaned_vec));
-        } else if let Some(str) = expected_response.as_str() {
-            if str.starts_with('$') {
-                let mut config_key = str.to_string();
-                config_key.remove(0); // remove leading $
-
-                if let Ok(new_value) = config.get_string_value(config_key.clone()) {
-                    return Ok(Value::String(new_value));
-                }
-
-                for (_step_id, step) in prior_steps.iter() {
-                    if let Ok(result) = step.get_field(config_key.clone()) {
-                        if let Some(res) = result {
-                            return Ok(res.clone());
-                        } else {
-                            continue;
-                        }
-                    }
-                }
-                return Err(anyhow!("Key {} not found", str));
-            } else {
-                return Ok(expected_response.clone());
-            }
-        } else {
-            return Ok(expected_response.clone());
-        }
-    }
-
     fn check_status_code(exp: Value, actual: u16) -> bool {
         if let Some(int_val) = exp.as_u64() {
             return int_val == u64::from(actual);
@@ -265,40 +698,6 @@ impl TestStep {
                 .all(|(exp_char, act_char)| exp_char == 'x' || exp_char == act_char);
         }
         return false;
-    }
-
-    fn check_response(
-        &self,
-        config: &Option<Arc<RwLock<ConfigData>>>,
-        expected: &Value,
-        actual: &Value,
-        prior_steps: &HashMap<String, TestStepResult>,
-        full: bool,
-    ) -> Result<()> {
-        let mut compare_mode = serde_json_assert::CompareMode::Inclusive;
-        if full {
-            compare_mode = serde_json_assert::CompareMode::Strict;
-        }
-
-        let assert_config =
-            serde_json_assert::Config::new(compare_mode).consider_array_sorting(false);
-
-        match self.get_expected_response(config, expected, prior_steps) {
-            Ok(exp) => {
-                match serde_json_assert::assert_json_matches_no_panic(actual, &exp, &assert_config)
-                {
-                    Ok(_res) => {
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        return Err(anyhow!(e));
-                    }
-                }
-            }
-            Err(e) => {
-                return Err(anyhow!(e));
-            }
-        }
     }
 
     fn get_identifier(&self, num_prior_steps: usize) -> String {
@@ -378,8 +777,6 @@ impl TestStep {
             expected_response_data,
             expected_status_code,
             allow_missing_fields: !full_data,
-            status: TestStepStatus::NotRun,
-            failure_reason: TestStepFailureReason::NoFailure,
         }
     }
 }
@@ -392,7 +789,6 @@ pub trait RunnableTestStep {
         config: &Option<Arc<RwLock<ConfigData>>>,
         prior_steps: &HashMap<String, TestStepResult>,
     ) -> Result<TestStepResult>;
-    fn get_status(&self) -> TestStepStatus;
 }
 
 #[async_trait]
@@ -408,45 +804,52 @@ impl RunnableTestStep for TestStep {
     ) -> Result<TestStepResult> {
         let client = Client::new();
 
-        let mut url: String = "".to_string();
-
-        match self.get_url(config) {
-            Ok(actual_url) => {
-                url = actual_url;
-            }
-            Err(e) => {
+        // let mut url: String = "".to_string();
+        let mut url = match self.get_url(config) {
+            Ok(actual_url) => actual_url,
+            Err(_) => {
                 let identifier = self.get_identifier(prior_steps.len());
                 return Ok(TestStepResult::make_failure(
+                    &self.id,
                     TestStepFailureReason::ConfigurationError,
                     format!("No url specified for step {}", identifier),
                 ));
             }
-        }
+        };
 
-        match url.chars().last() {
-            Some(last_char) => {
-                if last_char == '/' {
-                    url.pop();
-                }
-            }
-            None => {}
+        if let Some(last_char) = url.chars().last()
+            && last_char == '/'
+        {
+            url.pop();
         }
 
         let mut path = self.path.clone();
-        match self.path.chars().next() {
-            Some(first_char) => {
-                if first_char != '/' {
-                    path.insert(0, '/');
-                }
+        if let Some(first_char) = self.path.chars().next()
+            && first_char != '/'
+        {
+            path.insert(0, '/');
+        }
+
+        match clean_path(path, config, prior_steps) {
+            Ok(new_path) => {
+                path = new_path;
             }
-            None => {}
+            Err(e) => {
+                return Err(anyhow!("Error generating path: {}", e));
+            }
         }
 
         let full_url = format!("{}{}", url, path);
 
+        let headers = clean_headers(&self.header_data, config, prior_steps)?;
+
+        let req_data = clean_request_data(&self.request_data, config, prior_steps)?;
+        let mut response_data: Option<Value> = None;
+
         match client
             .request(self.method.clone(), full_url)
-            .json(&self.request_data)
+            .headers(headers)
+            .json(&req_data)
             .send()
             .await
         {
@@ -460,56 +863,44 @@ impl RunnableTestStep for TestStep {
                             exp_status_code, actual_status_code,
                         );
                         return Ok(TestStepResult::make_failure(
+                            &self.id,
                             TestStepFailureReason::StatusCodeError,
                             failure_message,
                         ));
                     }
                 }
 
-                if let Some(expected_response) = self.expected_response_data.clone() {
-                    match response.json::<Value>().await {
-                        Ok(actual_response) => {
-                            match self.get_expected_response(
-                                &config,
-                                &expected_response,
-                                prior_steps,
-                            ) {
-                                Ok(expected) => {
-                                    if let Err(e) = self.check_response(
-                                        &config,
-                                        &expected,
-                                        &actual_response,
-                                        prior_steps,
-                                        true,
-                                    ) {
-                                        let failure_message = format!("Response Incorrect: {}", e);
-                                        return Ok(TestStepResult::make_failure(
-                                            TestStepFailureReason::ResponseError,
-                                            failure_message,
-                                        ));
-                                    }
+                let res_text = response.text().await?;
+                // For debugging
+                // println!("{}", res_text);
 
-                                    return Ok(TestStepResult {
-                                        status: TestStepFailureReason::NoFailure,
-                                        failure_message: None,
-                                        request_data: Some(self.request_data.clone()),
-                                        response_data: Some(actual_response),
-                                        output_data: None,
-                                    });
-                                }
-                                Err(e) => {
-                                    let failure_message =
-                                        format!("Unable to Decode Expected Response: {}", e);
-                                    return Ok(TestStepResult::make_failure(
-                                        TestStepFailureReason::ResponseError,
-                                        failure_message,
-                                    ));
-                                }
+                // Try to decode JSON
+                match serde_json::from_str(&res_text) {
+                    //match response.json::<Value>().await {
+                    Ok(actual_response) => {
+                        if let Some(expected_response) = self.expected_response_data.clone() {
+                            if let Err(e) = compare_data(
+                                &actual_response,
+                                &expected_response,
+                                config,
+                                prior_steps,
+                                !self.allow_missing_fields,
+                            ) {
+                                let failure_message = format!("Assertion Error: {}", e);
+                                return Ok(TestStepResult::make_failure(
+                                    &self.id,
+                                    TestStepFailureReason::ResponseError,
+                                    failure_message,
+                                ));
                             }
                         }
-                        Err(e) => {
+                        response_data = Some(actual_response.clone());
+                    }
+                    Err(e) => {
+                        if self.expected_response_data.is_some() {
                             let failure_message = format!("Error Decoding Json: {}", e);
                             return Ok(TestStepResult::make_failure(
+                                &self.id,
                                 TestStepFailureReason::JsonDecodeError,
                                 failure_message,
                             ));
@@ -521,16 +912,19 @@ impl RunnableTestStep for TestStep {
                 return Err(anyhow!("Error Sending Request: {}", e));
             }
         }
+
+        let mut step_id: Option<String> = None;
+        if let Some(id) = &self.id {
+            step_id = Some(id.clone());
+        }
+
         return Ok(TestStepResult {
+            step_id,
             status: TestStepFailureReason::NoFailure,
             failure_message: None,
-            request_data: Some(self.request_data.clone()),
-            response_data: None,
+            request_data: Some(req_data),
+            response_data,
             output_data: None,
         });
-    }
-
-    fn get_status(&self) -> TestStepStatus {
-        self.status
     }
 }

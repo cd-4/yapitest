@@ -1,0 +1,73 @@
+
+test-login-valid:
+  steps:
+    - id: create-auth-user
+      path: /api/user/create
+      method: POST
+      data:
+        username: auth-test-user-001
+        password: authpass999!
+      assert:
+        status-code: 200
+    - path: /api/user/login
+      method: POST
+      data:
+        username: auth-test-user-001
+        password: authpass999!
+      assert:
+        status-code: 200
+        body:
+          token: +str
+
+test-login-wrong-password:
+  steps:
+    - path: /api/user/create
+      method: POST
+      data:
+        username: auth-wrong-pass-user
+        password: rightpassword!
+      assert:
+        status-code: 200
+    - path: /api/user/login
+      method: POST
+      data:
+        username: auth-wrong-pass-user
+        password: wrongpassword!
+      assert:
+        status-code: 401
+
+test-login-unknown-user:
+  steps:
+    - path: /api/user/login
+      method: POST
+      data:
+        username: nobody-xyz-9999
+        password: doesntmatter
+      assert:
+        status-code: 404
+
+test-no-token-on-protected:
+  steps:
+    - path: /api/user
+      assert:
+        status-code: 403
+
+test-bad-token-on-protected:
+  steps:
+    - path: /api/user
+      headers:
+        API-Token: this-is-not-a-real-token
+      assert:
+        status-code: 403
+
+test-bad-token-on-post-create:
+  steps:
+    - path: /api/post/create
+      method: POST
+      headers:
+        API-Token: definitely-not-valid
+      data:
+        title: Test Title
+        body: Test body
+      assert:
+        status-code: 403

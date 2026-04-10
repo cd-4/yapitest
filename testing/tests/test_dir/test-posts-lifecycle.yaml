@@ -1,0 +1,132 @@
+
+test-post-fields:
+  setup: create-user
+  steps:
+    - id: new-post
+      path: /api/post/create
+      method: POST
+      headers:
+        API-Token: $setup.token
+      data:
+        title: "Field Test Title"
+        body: "Field test body content"
+      assert:
+        status-code: 201
+        body:
+          post_id: +int
+    - path: /api/post/$new-post.response.post_id
+      method: GET
+      assert:
+        status-code: 200
+        full: true
+        body:
+          title: "Field Test Title"
+          body: "Field test body content"
+          id: +int
+          user_id: +int
+
+test-get-nonexistent-post:
+  steps:
+    - path: /api/post/999999
+      assert:
+        status-code: 404
+
+test-post-appears-in-user-profile:
+  setup: create-user
+  steps:
+    - path: /api/post/create
+      method: POST
+      headers:
+        API-Token: $setup.token
+      data:
+        title: "Profile Test Post"
+        body: "Should appear in user profile"
+      assert:
+        status-code: 201
+    - path: /api/user
+      method: GET
+      headers:
+        API-Token: $setup.token
+      assert:
+        status-code: 200
+        body:
+          posts: +arr
+          len(posts): '>=1'
+
+test-delete-post:
+  setup: create-user
+  steps:
+    - id: make-post
+      path: /api/post/create
+      method: POST
+      headers:
+        API-Token: $setup.token
+      data:
+        title: "Delete Me Post"
+        body: "This post will be deleted"
+      assert:
+        status-code: 201
+    - path: /api/post/$make-post.response.post_id
+      method: DELETE
+      headers:
+        API-Token: $setup.token
+      assert:
+        status-code: 200
+        body:
+          success: true
+    - path: /api/post/$make-post.response.post_id
+      assert:
+        status-code: 404
+
+test-delete-post-wrong-user:
+  setup: create-user
+  steps:
+    - id: make-post
+      path: /api/post/create
+      method: POST
+      headers:
+        API-Token: $setup.token
+      data:
+        title: "Protected Post"
+        body: "Only the owner can delete this"
+      assert:
+        status-code: 201
+    - id: create-wrong-user
+      path: /api/user/create
+      method: POST
+      data:
+        username: wrong-user-del-001
+        password: wrongpass123!
+    - path: /api/post/$make-post.response.post_id
+      method: DELETE
+      headers:
+        API-Token: $create-wrong-user.response.token
+      assert:
+        status-code: 403
+
+test-post-list-contains-post:
+  setup: create-user
+  steps:
+    - path: /api/post/create
+      method: POST
+      headers:
+        API-Token: $setup.token
+      data:
+        title: "List Test Post"
+        body: "Should appear in post list"
+      assert:
+        status-code: 201
+    - path: /api/post/list
+      assert:
+        status-code: 200
+        body:
+          posts: +arr
+          len(posts): '>=1'
+
+test-post-list-limit:
+  steps:
+    - path: /api/post/list
+      assert:
+        status-code: 200
+        body:
+          len(posts): '<=20'

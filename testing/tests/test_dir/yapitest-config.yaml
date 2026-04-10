@@ -1,13 +1,14 @@
 
 step-sets:
   create-user:
+    once: true
     steps:
       - id: create-user
         path: /api/user/create
         method: POST
         data:
-          username: $vars.sample-user
-          password: $vars.sample-password
+          username: setup-test-user
+          password: setup-pass-123!
     output:
       username: $create-user.data.username
       password: $create-user.data.password
