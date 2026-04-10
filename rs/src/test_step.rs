@@ -502,6 +502,24 @@ pub fn compare_primitive_values(
                 } else {
                     return Ok(());
                 }
+            } else if exp_type == "bool" {
+                if observed.as_bool().is_none() {
+                    return Err(anyhow!("Expected bool for {}", keys));
+                } else {
+                    return Ok(());
+                }
+            } else if exp_type == "arr" || exp_type == "array" {
+                if observed.as_array().is_none() {
+                    return Err(anyhow!("Expected array for {}", keys));
+                } else {
+                    return Ok(());
+                }
+            } else if exp_type == "dict" || exp_type == "obj" || exp_type == "object" {
+                if observed.as_object().is_none() {
+                    return Err(anyhow!("Expected object for {}", keys));
+                } else {
+                    return Ok(());
+                }
             }
         } else if exp_str.starts_with("$") {
             let exp_var = get_variable(exp_str.to_string(), config, prior_steps)?;
