@@ -1,0 +1,238 @@
+
+# === PASS TESTS ===
+# These tests exercise every assertion type and should all pass.
+
+test-assert-bool-type:
+  steps:
+    - path: /api/healthz
+      assert:
+        status-code: 200
+        body:
+          healthy: +bool
+
+test-assert-float-type:
+  setup: create-user
+  steps:
+    - path: /api/user
+      method: GET
+      headers:
+        API-Token: $setup.token
+      assert:
+        status-code: 200
+        body:
+          score: +float
+
+test-assert-dict-type:
+  setup: create-user
+  steps:
+    - id: new-post
+      path: /api/post/create
+      method: POST
+      headers:
+        API-Token: $setup.token
+      data:
+        title: "Dict Test Post"
+        body: "Dict test content"
+      assert:
+        status-code: 201
+    - path: /api/post/$new-post.response.post_id
+      method: GET
+      assert:
+        status-code: 200
+        body:
+          meta: +dict
+
+test-assert-len-gt-pass:
+  steps:
+    - path: /api/user/create
+      method: POST
+      data:
+        username: len-gt-user-001
+        password: lengtpass001!
+      assert:
+        status-code: 200
+        body:
+          token: +str
+          len(token): '>10'
+
+test-assert-len-lt-pass:
+  steps:
+    - path: /api/user/create
+      method: POST
+      data:
+        username: len-lt-user-001
+        password: lenltpass001!
+      assert:
+        status-code: 200
+        body:
+          token: +str
+          len(token): '<100'
+
+test-assert-len-eq-pass:
+  steps:
+    - path: /api/user/create
+      method: POST
+      data:
+        username: len-eq-user-001
+        password: leneqpass001!
+      assert:
+        status-code: 200
+        body:
+          token: +str
+          len(token): '=20'
+
+# === FAIL TESTS ===
+# These tests are intentionally wrong and should fail.
+# They exist to verify that the framework correctly detects each assertion failure.
+
+test-assert-status-exact-fail:
+  steps:
+    - path: /api/post/999999
+      assert:
+        status-code: 200
+
+test-assert-status-wildcard-fail:
+  steps:
+    - path: /api/post/999999
+      assert:
+        status-code: 2xx
+
+test-assert-str-type-fail:
+  setup: create-user
+  steps:
+    - path: /api/user
+      method: GET
+      headers:
+        API-Token: $setup.token
+      assert:
+        body:
+          id: +str
+
+test-assert-int-type-fail:
+  steps:
+    - path: /api/healthz
+      assert:
+        body:
+          healthy: +int
+
+test-assert-float-type-fail:
+  setup: create-user
+  steps:
+    - path: /api/user
+      method: GET
+      headers:
+        API-Token: $setup.token
+      assert:
+        body:
+          name: +float
+
+test-assert-bool-type-fail:
+  setup: create-user
+  steps:
+    - path: /api/user
+      method: GET
+      headers:
+        API-Token: $setup.token
+      assert:
+        body:
+          id: +bool
+
+test-assert-arr-type-fail:
+  setup: create-user
+  steps:
+    - path: /api/user
+      method: GET
+      headers:
+        API-Token: $setup.token
+      assert:
+        body:
+          id: +arr
+
+test-assert-dict-type-fail:
+  setup: create-user
+  steps:
+    - path: /api/user
+      method: GET
+      headers:
+        API-Token: $setup.token
+      assert:
+        body:
+          name: +dict
+
+test-assert-len-lte-fail:
+  steps:
+    - path: /api/user/create
+      method: POST
+      data:
+        username: len-lte-fail-001
+        password: lenltefail001!
+      assert:
+        body:
+          len(token): '<=5'
+
+test-assert-len-gte-fail:
+  steps:
+    - path: /api/user/create
+      method: POST
+      data:
+        username: len-gte-fail-001
+        password: lengtefail001!
+      assert:
+        body:
+          len(token): '>=100'
+
+test-assert-len-gt-fail:
+  steps:
+    - path: /api/user/create
+      method: POST
+      data:
+        username: len-gt-fail-001
+        password: lengtfail001!
+      assert:
+        body:
+          len(token): '>100'
+
+test-assert-len-lt-fail:
+  steps:
+    - path: /api/user/create
+      method: POST
+      data:
+        username: len-lt-fail-001
+        password: lenltfail001!
+      assert:
+        body:
+          len(token): '<5'
+
+test-assert-len-eq-fail:
+  steps:
+    - path: /api/user/create
+      method: POST
+      data:
+        username: len-eq-fail-001
+        password: leneqfail001!
+      assert:
+        body:
+          len(token): '=5'
+
+test-assert-full-extra-field-fail:
+  setup: create-user
+  steps:
+    - id: new-post
+      path: /api/post/create
+      method: POST
+      headers:
+        API-Token: $setup.token
+      data:
+        title: "Full Test Post"
+        body: "Full test content"
+      assert:
+        status-code: 201
+    - path: /api/post/$new-post.response.post_id
+      method: GET
+      assert:
+        full: true
+        body:
+          title: "Full Test Post"
+          body: "Full test content"
+          id: +int
+          # intentionally omits user_id and meta — should fail with full: true
