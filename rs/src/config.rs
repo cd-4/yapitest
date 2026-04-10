@@ -349,7 +349,7 @@ impl RunnableTestStep for TestStepGroupReference {
 
 lazy_static! {
     static ref GROUP_TEST_RESULTS: DashMap<String, TestStepResult> = DashMap::new();
-    //static ref GROUP_INIT: DashMap<String, Arc<tokio::sync::Mutex<()>>> = DashMap::new();
+    static ref GROUP_INIT: DashMap<String, Arc<tokio::sync::Mutex<()>>> = DashMap::new();
     static ref GROUP_ONCE: DashMap<String, Arc<OnceCell<TestStepResult>>> = DashMap::new();
 }
 
@@ -370,69 +370,56 @@ impl RunnableTestStep for TestStepGroup {
             return self.run_internal(config, prior_steps).await;
         }
 
-        // Fast path: if already computed, return immediately (no locking)
-        if let Some(result) = GROUP_TEST_RESULTS.get(&test_group_id) {
-            return Ok(result.value().clone());
-        }
-
-        // Get or create the OnceCell for this exact group_id
-        let cell = GROUP_ONCE
-            .entry(test_group_id.clone())
-            .or_insert_with(|| Arc::new(OnceCell::new()))
-            .value()
-            .clone();
-
-        // This is the magic: get_or_init runs the closure AT MOST ONCE,
-        // even if 100 tasks call it concurrently.
-        // All other tasks wait efficiently until the first one finishes.
-        let result = cell
-            .get_or_init(|| async {
-                // === ONLY ONE TASK EVER EXECUTES THIS BLOCK ===
-                self.run_internal(config, prior_steps)
-                    .await
-                    .unwrap_or_else(|e| {
-                        // Decide what to do on error.
-                        // Option 1: panic (so the whole group fails loudly)
-                        panic!("Group {} failed: {}", test_group_id, e);
-
-                        // Option 2 (recommended for tests): return a dummy error result
-                        // or cache the error if you want to avoid retrying.
-                        //TestStepResult::make_failure(...) // adapt to your type
-                    })
-            })
-            .await;
-
-        // Cache the final result for super-fast future lookups
-        GROUP_TEST_RESULTS.insert(test_group_id, result.clone());
-
-        Ok(result.clone())
-
         /*
-                // Fast path - no lock
-                if let Some(result) = GROUP_TEST_RESULTS.get(&test_group_id) {
-                    return Ok(result.value().clone()); // .value() is explicit and clear
-                }
-
-                // Get (or create) the per-group initialization mutex
-                let init_lock = GROUP_INIT
-                    .entry(test_group_id.clone())
-                    .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-                    .value()
-                    .clone();
-
-                // Only one task will run the body at a time
-                let _guard = init_lock.lock().await;
-
-                // Double-check AFTER acquiring the init lock
                 if let Some(result) = GROUP_TEST_RESULTS.get(&test_group_id) {
                     return Ok(result.value().clone());
                 }
 
-                let result = self.run_internal(config, prior_steps).await?;
+                let cell = GROUP_ONCE
+                    .entry(test_group_id.clone())
+                    .or_insert_with(|| Arc::new(OnceCell::new()))
+                    .value()
+                    .clone();
 
+                let result = cell
+                    .get_or_init(|| async {
+                        self.run_internal(config, prior_steps)
+                            .await
+                            .unwrap_or_else(|e| {
+                                panic!("Group {} failed: {}", test_group_id, e);
+                            })
+                    })
+                    .await;
+
+                // Cache the final result for super-fast future lookups
                 GROUP_TEST_RESULTS.insert(test_group_id, result.clone());
 
-                Ok(result)
+                Ok(result.clone())
         */
+        // Fast path - no lock
+        if let Some(result) = GROUP_TEST_RESULTS.get(&test_group_id) {
+            return Ok(result.value().clone()); // .value() is explicit and clear
+        }
+
+        // Get (or create) the per-group initialization mutex
+        let init_lock = GROUP_INIT
+            .entry(test_group_id.clone())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .value()
+            .clone();
+
+        // Only one task will run the body at a time
+        let _guard = init_lock.lock().await;
+
+        // Double-check AFTER acquiring the init lock
+        if let Some(result) = GROUP_TEST_RESULTS.get(&test_group_id) {
+            return Ok(result.value().clone());
+        }
+
+        let result = self.run_internal(config, prior_steps).await?;
+
+        GROUP_TEST_RESULTS.insert(test_group_id, result.clone());
+
+        Ok(result)
     }
 }
