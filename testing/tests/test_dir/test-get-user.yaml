@@ -9,6 +9,19 @@ test-get-user:
         body:
           name: $setup.username
 
+test-inline-step-group:
+  steps:
+    - create-user
+    - path: /api/user
+      method: GET
+      headers:
+        API-Token: $create-user.token
+      assert:
+        status-code: 200
+        body:
+          name: +str
+          id: +int
+
 test-update-username:
   setup: create-user
   steps:

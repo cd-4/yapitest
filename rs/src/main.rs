@@ -4,8 +4,8 @@ use colored::*;
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::sync::mpsc;
 use std::sync::{Arc, RwLock};
+use std::sync::{Mutex, mpsc};
 use std::thread;
 use std::time::SystemTime;
 use tokio::runtime::Runtime;
@@ -18,6 +18,7 @@ use crate::config::ConfigData;
 use crate::test::Test;
 use crate::test::TestResult;
 use crate::test::print_test_results;
+use crate::test_step::TestStepResult;
 
 fn is_yaml(path: &PathBuf) -> bool {
     if let Some(extension) = path.extension() {
@@ -250,7 +251,7 @@ async fn run_tests(tests: &Vec<Test>, threads: Option<u64>) -> Vec<TestResult> {
         for group in test_groups {
             let group_owned = group.to_vec();
             let tx_clone = tx.clone();
-
+            //let cloned_arc = Arc::clone(&shared_steps_arc);
             s.spawn(move || {
                 let rt = Runtime::new().expect("Failed to create runtime");
 

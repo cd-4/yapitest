@@ -2,13 +2,15 @@ use crate::test_step::{RunnableTestStep, TestStep, TestStepResult, TestStepSpec}
 use anyhow::{Error, Result, anyhow};
 use async_trait::async_trait;
 use dashmap::DashMap;
+use lazy_static::lazy_static;
 use serde::Deserialize;
 use serde_yaml::{Value, from_value};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
-use std::sync::{Arc, LazyLock, RwLock};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
+use tokio::sync::OnceCell;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -30,8 +32,6 @@ pub struct TestStepGroup {
 pub struct TestStepGroupReference {
     id: String,
 }
-
-static GROUP_TEST_RESULTS: LazyLock<DashMap<String, TestStepResult>> = LazyLock::new(DashMap::new);
 
 impl TestStepGroup {
     pub fn from_spec(id: String, spec: TestStepGroupSpec, path: &PathBuf) -> TestStepGroup {
@@ -68,6 +68,76 @@ impl TestStepGroup {
 
     pub fn get_group_id(&self) -> String {
         return format!("{}:{}", self.path.display(), self.id);
+    }
+
+    pub async fn run_internal(
+        &self,
+        config: &Option<Arc<RwLock<ConfigData>>>,
+        prior_steps: &HashMap<String, TestStepResult>,
+    ) -> Result<TestStepResult> {
+        // Run Steps
+        let mut local_steps: HashMap<String, TestStepResult> = HashMap::new();
+        for step in self.steps.iter() {
+            match step.run(config, prior_steps).await {
+                Ok(result) => {
+                    if let Some(id) = step.get_id() {
+                        local_steps.insert(id.clone(), result);
+                    }
+                }
+                Err(e) => {
+                    return Err(anyhow!("Error running step: {}", e));
+                }
+            }
+        }
+
+        // Process Outputs
+        let mut outputs: HashMap<String, serde_json::Value> = HashMap::new();
+
+        for (output_key, output_value) in self.outputs.iter() {
+            if output_value.starts_with('$') {
+                let mut output_str_copy = output_value.clone();
+                output_str_copy.remove(0);
+
+                let mut output_sections: Vec<String> =
+                    output_str_copy.split('.').map(|v| v.to_string()).collect();
+
+                let mut step_id: String = "".to_string();
+
+                if let Some(step_id_val) = output_sections.get(0) {
+                    step_id = step_id_val.clone();
+                } else {
+                    return Err(anyhow!("Invalid Step Reference: {}", output_value));
+                }
+
+                if let Some(step) = local_steps.get(&step_id) {
+                    output_sections.remove(0);
+                    let field_key = output_sections.join(".");
+                    if let Ok(val) = step.get_field(field_key.clone()) {
+                        if let Some(yaml_val) = val {
+                            if let Ok(v) = serde_json::from_value(yaml_val) {
+                                outputs.insert(output_key.clone(), v);
+                                continue;
+                            }
+                        }
+                        return Err(anyhow!(
+                            "Field {} not found in step {}",
+                            output_key,
+                            step_id,
+                        ));
+                    }
+                } else {
+                    return Err(anyhow!("Step {} not found.", step_id));
+                }
+            }
+        }
+
+        let result = TestStepResult::make_success(
+            Some(self.id.clone()),
+            serde_yaml::from_value(Value::Null)?,
+            serde_yaml::from_value(Value::Null)?,
+            serde_json::to_value(outputs)?,
+        );
+        Ok(result)
     }
 }
 
@@ -269,8 +339,18 @@ impl RunnableTestStep for TestStepGroupReference {
         config: &Option<Arc<RwLock<ConfigData>>>,
         prior_steps: &HashMap<String, TestStepResult>,
     ) -> Result<TestStepResult> {
-        Err(anyhow!("SDF"))
+        let cfg = config
+            .as_ref()
+            .ok_or_else(|| anyhow!("No config available to resolve step group '{}'", self.id))?;
+        let step_group = cfg.read().unwrap().get_step_group(self.id.clone())?;
+        step_group.run(config, prior_steps).await
     }
+}
+
+lazy_static! {
+    static ref GROUP_TEST_RESULTS: DashMap<String, TestStepResult> = DashMap::new();
+    //static ref GROUP_INIT: DashMap<String, Arc<tokio::sync::Mutex<()>>> = DashMap::new();
+    static ref GROUP_ONCE: DashMap<String, Arc<OnceCell<TestStepResult>>> = DashMap::new();
 }
 
 #[async_trait]
@@ -285,79 +365,74 @@ impl RunnableTestStep for TestStepGroup {
         prior_steps: &HashMap<String, TestStepResult>,
     ) -> Result<TestStepResult> {
         let test_group_id = self.get_group_id();
-        if self.runs_once() {
-            if let Some(result) = GROUP_TEST_RESULTS.get(&test_group_id) {
-                return Ok(result.clone());
-            }
+
+        if !self.runs_once() {
+            return self.run_internal(config, prior_steps).await;
         }
 
-        // Run Steps
-        let mut local_steps: HashMap<String, TestStepResult> = HashMap::new();
-        for step in self.steps.iter() {
-            match step.run(config, prior_steps).await {
-                Ok(result) => {
-                    if let Some(id) = step.get_id() {
-                        local_steps.insert(id.clone(), result);
-                    }
-                }
-                Err(e) => {
-                    return Err(anyhow!("Error running step: {}", e));
-                }
-            }
+        // Fast path: if already computed, return immediately (no locking)
+        if let Some(result) = GROUP_TEST_RESULTS.get(&test_group_id) {
+            return Ok(result.value().clone());
         }
 
-        // Process Outputs
-        let mut outputs: HashMap<String, serde_json::Value> = HashMap::new();
+        // Get or create the OnceCell for this exact group_id
+        let cell = GROUP_ONCE
+            .entry(test_group_id.clone())
+            .or_insert_with(|| Arc::new(OnceCell::new()))
+            .value()
+            .clone();
 
-        for (output_key, output_value) in self.outputs.iter() {
-            if output_value.starts_with('$') {
-                let mut output_str_copy = output_value.clone();
-                output_str_copy.remove(0);
+        // This is the magic: get_or_init runs the closure AT MOST ONCE,
+        // even if 100 tasks call it concurrently.
+        // All other tasks wait efficiently until the first one finishes.
+        let result = cell
+            .get_or_init(|| async {
+                // === ONLY ONE TASK EVER EXECUTES THIS BLOCK ===
+                self.run_internal(config, prior_steps)
+                    .await
+                    .unwrap_or_else(|e| {
+                        // Decide what to do on error.
+                        // Option 1: panic (so the whole group fails loudly)
+                        panic!("Group {} failed: {}", test_group_id, e);
 
-                let mut output_sections: Vec<String> =
-                    output_str_copy.split('.').map(|v| v.to_string()).collect();
+                        // Option 2 (recommended for tests): return a dummy error result
+                        // or cache the error if you want to avoid retrying.
+                        //TestStepResult::make_failure(...) // adapt to your type
+                    })
+            })
+            .await;
 
-                let mut step_id: String = "".to_string();
+        // Cache the final result for super-fast future lookups
+        GROUP_TEST_RESULTS.insert(test_group_id, result.clone());
 
-                if let Some(step_id_val) = output_sections.get(0) {
-                    step_id = step_id_val.clone();
-                } else {
-                    return Err(anyhow!("Invalid Step Reference: {}", output_value));
+        Ok(result.clone())
+
+        /*
+                // Fast path - no lock
+                if let Some(result) = GROUP_TEST_RESULTS.get(&test_group_id) {
+                    return Ok(result.value().clone()); // .value() is explicit and clear
                 }
 
-                if let Some(step) = local_steps.get(&step_id) {
-                    output_sections.remove(0);
-                    let field_key = output_sections.join(".");
-                    if let Ok(val) = step.get_field(field_key.clone()) {
-                        if let Some(yaml_val) = val {
-                            if let Ok(v) = serde_json::from_value(yaml_val) {
-                                outputs.insert(output_key.clone(), v);
-                                continue;
-                            }
-                        }
-                        return Err(anyhow!(
-                            "Field {} not found in step {}",
-                            output_key,
-                            step_id,
-                        ));
-                    }
-                } else {
-                    return Err(anyhow!("Step {} not found.", step_id));
+                // Get (or create) the per-group initialization mutex
+                let init_lock = GROUP_INIT
+                    .entry(test_group_id.clone())
+                    .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+                    .value()
+                    .clone();
+
+                // Only one task will run the body at a time
+                let _guard = init_lock.lock().await;
+
+                // Double-check AFTER acquiring the init lock
+                if let Some(result) = GROUP_TEST_RESULTS.get(&test_group_id) {
+                    return Ok(result.value().clone());
                 }
-            }
-        }
 
-        let result = TestStepResult::make_success(
-            Some(self.id.clone()),
-            serde_yaml::from_value(Value::Null)?,
-            serde_yaml::from_value(Value::Null)?,
-            serde_json::to_value(outputs)?,
-        );
+                let result = self.run_internal(config, prior_steps).await?;
 
-        if self.runs_once() {
-            GROUP_TEST_RESULTS.insert(test_group_id, result.clone());
-        }
+                GROUP_TEST_RESULTS.insert(test_group_id, result.clone());
 
-        return Ok(result);
+                Ok(result)
+        */
     }
 }
