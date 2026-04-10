@@ -126,7 +126,7 @@ impl TestResult {
         let step_result = TestStepResult::make_failure(
             &step_id,
             failure_reason,
-            format!("{}: ({})", error_prefix, error),
+            format!("{}: {}", error_prefix, error),
         );
         TestResult {
             test_name: test_name.to_string(),
@@ -203,7 +203,7 @@ impl Test {
                     let step = TestStep::from_spec(test_step_spec);
                     test_steps.push(Arc::new(RwLock::new(step)));
                 }
-                Err(e) => {
+                Err(_) => {
                     // Possible that it's using a test step defined in the config
                     match step.clone().as_str() {
                         Some(step_name) => {
@@ -291,7 +291,7 @@ impl Test {
                             &self.path,
                             Some("setup".to_string()),
                             TestStepFailureReason::Miscellaneous,
-                            "Step Failed to Run".to_string(),
+                            "setup failed".to_string(),
                             e,
                         );
                     }
@@ -302,7 +302,7 @@ impl Test {
                         &self.path,
                         Some("setup".to_string()),
                         TestStepFailureReason::SharedStepNotFoundError,
-                        "Step Group Not Found".to_string(),
+                        "setup step-set not found".to_string(),
                         e,
                     );
                 }
@@ -332,7 +332,7 @@ impl Test {
                         &self.path,
                         step_id,
                         TestStepFailureReason::Miscellaneous,
-                        "Step Failed to Run".to_string(),
+                        "step failed".to_string(),
                         e,
                     );
                 }
@@ -352,7 +352,7 @@ impl Test {
                             &self.path,
                             Some("teardown".to_string()),
                             TestStepFailureReason::Miscellaneous,
-                            "Test Failed to Run".to_string(),
+                            "teardown failed".to_string(),
                             e,
                         );
                     }
@@ -363,7 +363,7 @@ impl Test {
                         &self.path,
                         Some("teardown".to_string()),
                         TestStepFailureReason::SharedStepNotFoundError,
-                        "Step Group Not Found".to_string(),
+                        "teardown step-set not found".to_string(),
                         e,
                     );
                 }

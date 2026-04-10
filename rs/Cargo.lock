@@ -1101,26 +1101,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rs"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "clap",
- "colored",
- "dashmap",
- "lazy_static",
- "regex",
- "reqwest",
- "serde",
- "serde-json-assert",
- "serde_json",
- "serde_yaml",
- "tokio",
- "walkdir",
-]
-
-[[package]]
 name = "rustc-hash"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2062,6 +2042,26 @@ name = "writeable"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
+
+[[package]]
+name = "yapitest"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clap",
+ "colored",
+ "dashmap",
+ "lazy_static",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde-json-assert",
+ "serde_json",
+ "serde_yaml",
+ "tokio",
+ "walkdir",
+]
 
 [[package]]
 name = "yoke"

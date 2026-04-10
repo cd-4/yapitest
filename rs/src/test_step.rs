@@ -134,6 +134,7 @@ pub fn get_variable(
             .collect();
 
         if let Some(step) = segments.first().and_then(|v| prior_steps.get(v)) {
+            let step_id = segments[0].clone();
             segments.remove(0);
             let field_key = segments.join(".");
             match step.get_field(field_key.clone()) {
@@ -147,18 +148,28 @@ pub fn get_variable(
                         }
                         return Ok(val);
                     } else {
-                        return Err(anyhow!("Value {} not found", field_key));
+                        return Err(anyhow!(
+                            "'{}' — '{}' not found in step '{}'",
+                            name, field_key, step_id
+                        ));
                     }
                 }
-                Err(e) => {
-                    return Err(anyhow!("Value {} not found", field_key));
+                Err(_) => {
+                    return Err(anyhow!(
+                        "'{}' — '{}' not found in step '{}'",
+                        name, field_key, step_id
+                    ));
                 }
             }
         }
 
-        return Err(anyhow!("2 Value not found: {}", name));
+        let step_id = segments.into_iter().next().unwrap_or_default();
+        return Err(anyhow!(
+            "'{}' — no step with id '{}' was found",
+            name, step_id
+        ));
     }
-    Err(anyhow!("3 Value not found: {}", name))
+    Err(anyhow!("'{}' could not be resolved", name))
 }
 
 pub fn clean_request_data(
@@ -223,7 +234,11 @@ pub fn clean_path(
             } else if let Some(seg_int) = new_seg.as_i64() {
                 segments.push(format!("{}", seg_int));
             } else {
-                return Err(anyhow!("Variable {} not of type string", segment));
+                return Err(anyhow!(
+                    "path variable '{}' must resolve to a string or integer, got {}",
+                    segment,
+                    value_type_name(&new_seg)
+                ));
             }
         } else {
             segments.push(segment.to_string());
@@ -252,11 +267,14 @@ pub fn clean_headers(
                         let val = HeaderValue::from_str(header_str).unwrap();
                         output.insert(name, val);
                     } else {
-                        return Err(anyhow!("Invalid Header {}: {}", k, v));
+                        return Err(anyhow!(
+                            "header '{}': '{}' resolved to a non-string value",
+                            k, v
+                        ));
                     }
                 }
                 Err(e) => {
-                    return Err(anyhow!("Invalid Header {}: {} ({})", k, v, e));
+                    return Err(anyhow!("header '{}': could not resolve '{}' — {}", k, v, e));
                 }
             }
         } else {
@@ -317,7 +335,10 @@ pub fn get_value_length(val: &Value) -> Result<i64> {
         return Ok(value_obj.len() as i64);
     }
 
-    Err(anyhow!("Size could not be determined for {}", val))
+    Err(anyhow!(
+        "cannot check length of a {} value",
+        value_type_name(val)
+    ))
 }
 
 pub fn check_size(val: &Value, size_str: String) -> Result<bool> {
@@ -342,7 +363,7 @@ pub fn check_size(val: &Value, size_str: String) -> Result<bool> {
             }
         },
         Err(e) => {
-            return Err(anyhow!("Unable to pare comparison: {}", e));
+            return Err(anyhow!("invalid size comparison '{}': {}", size_str, e));
         }
     }
 }
@@ -368,11 +389,12 @@ pub fn compare_data_objects(
         let observed = match observed_object.get(key) {
             Some(v) => v,
             None => {
-                return Err(anyhow!(
-                    "Expected field '{}.{}' not found in response",
-                    keys,
-                    key
-                ));
+                let path = if keys.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{}.{}", keys.trim_start_matches('.'), key)
+                };
+                return Err(anyhow!("missing field '{}' in response", path));
             }
         };
 
@@ -393,26 +415,39 @@ pub fn compare_data_objects(
 
         let size_str = format!("len({})", key);
         if let Some(expected_size) = expected_object.get(&size_str) {
-            match check_size(observed, expected_size.as_str().unwrap().to_string()) {
-                Ok(is_correct_size) => {
-                    if !is_correct_size {
+            let cmp_str = expected_size.as_str().unwrap().to_string();
+            let field_path = if keys.is_empty() {
+                key.clone()
+            } else {
+                format!("{}.{}", keys.trim_start_matches('.'), key)
+            };
+            match get_value_length(observed) {
+                Ok(actual_len) => match check_size(observed, cmp_str.clone()) {
+                    Ok(true) => {}
+                    Ok(false) => {
                         return Err(anyhow!(
-                            "Incorrect Size: len({}.{}) !{}",
-                            keys,
-                            key,
-                            expected_size
+                            "len({}) expected {}, got {}",
+                            field_path, cmp_str, actual_len
                         ));
                     }
-                }
-                Err(_) => {
-                    return Err(anyhow!("Error checking size for {}.{}", keys, key));
-                }
+                    Err(_) => {
+                        return Err(anyhow!(
+                            "invalid size comparison '{}' on field '{}'",
+                            cmp_str, field_path
+                        ));
+                    }
+                },
+                Err(e) => return Err(e),
             }
         } else if full && !expected_object.contains_key(key) {
+            let field_path = if keys.is_empty() {
+                key.clone()
+            } else {
+                format!("{}.{}", keys.trim_start_matches('.'), key)
+            };
             return Err(anyhow!(
-                "'full' is set and unexpected field '{}.{}' was found in response",
-                keys,
-                key
+                "unexpected field '{}' in response — add it to the 'body' assertion or remove 'full: true'",
+                field_path
             ));
         }
     }
@@ -431,11 +466,10 @@ pub fn compare_array_objects(
     let num_expected = expected_object.len();
     let num_observed = observed_object.len();
     if num_expected != num_observed {
+        let path = keys.trim_start_matches('.');
         return Err(anyhow!(
-            "Expected {} items in {}. Found {}",
-            num_expected,
-            keys,
-            num_observed
+            "'{}' — expected {} item(s), got {}",
+            path, num_expected, num_observed
         ));
     }
 
@@ -498,55 +532,43 @@ pub fn compare_primitive_values(
     config: &Option<Arc<RwLock<ConfigData>>>,
     prior_steps: &HashMap<String, TestStepResult>,
 ) -> Result<()> {
+    let path = keys.trim_start_matches('.');
+
     if let Some(exp_str) = expected.as_str() {
         if exp_str.starts_with('+') {
-            let mut exp_type = exp_str.to_string();
-            exp_type.remove(0);
-            if (exp_type == "str" || exp_type == "string") {
-                if observed.as_str().is_none() {
-                    return Err(anyhow!("Expected string for {}", keys));
-                } else {
-                    return Ok(());
+            let exp_type = &exp_str[1..];
+            let type_ok = match exp_type {
+                "str" | "string" => observed.as_str().is_some(),
+                "float" | "flt" => observed.as_f64().is_some(),
+                "int" | "integer" => observed.as_i64().is_some(),
+                "bool" | "boolean" => observed.as_bool().is_some(),
+                "arr" | "array" | "list" => observed.as_array().is_some(),
+                "dict" | "dic" | "dictionary" | "obj" | "object" | "map" => {
+                    observed.as_object().is_some()
                 }
-            } else if (exp_type == "float" || exp_type == "flt") {
-                if observed.as_f64().is_none() {
-                    return Err(anyhow!("Expected float for {}", keys));
-                } else {
-                    return Ok(());
-                }
-            } else if exp_type == "int" {
-                if observed.as_i64().is_none() {
-                    return Err(anyhow!("Expected int for {}", keys));
-                } else {
-                    return Ok(());
-                }
-            } else if exp_type == "bool" {
-                if observed.as_bool().is_none() {
-                    return Err(anyhow!("Expected bool for {}", keys));
-                } else {
-                    return Ok(());
-                }
-            } else if exp_type == "arr" || exp_type == "array" {
-                if observed.as_array().is_none() {
-                    return Err(anyhow!("Expected array for {}", keys));
-                } else {
-                    return Ok(());
-                }
-            } else if exp_type == "dict" || exp_type == "obj" || exp_type == "object" {
-                if observed.as_object().is_none() {
-                    return Err(anyhow!("Expected object for {}", keys));
-                } else {
-                    return Ok(());
-                }
+                _ => true,
+            };
+            if !type_ok {
+                let readable_type = match exp_type {
+                    "str" | "string" => "a string",
+                    "float" | "flt" => "a float",
+                    "int" | "integer" => "an integer",
+                    "bool" | "boolean" => "a boolean",
+                    "arr" | "array" | "list" => "an array",
+                    _ => "an object",
+                };
+                return Err(anyhow!(
+                    "'{}' — expected {}, got {} ({})",
+                    path, readable_type, value_type_name(observed), observed
+                ));
             }
-        } else if exp_str.starts_with("$") {
+            return Ok(());
+        } else if exp_str.starts_with('$') {
             let exp_var = get_variable(exp_str.to_string(), config, prior_steps)?;
             if !value_eq(&exp_var, observed) {
                 return Err(anyhow!(
-                    "Value Incorrect for ({}) 1: (Actual:{}, Expected:{})",
-                    keys,
-                    observed,
-                    exp_var,
+                    "'{}' — expected {}, got {}",
+                    path, exp_var, observed
                 ));
             } else {
                 return Ok(());
@@ -554,12 +576,10 @@ pub fn compare_primitive_values(
         }
     }
 
-    let expected_type = value_type_name(expected);
-    let observed_type = value_type_name(observed);
-
-    if observed_type != expected_type {
+    if value_type_name(observed) != value_type_name(expected) {
         return Err(anyhow!(
-            "Expected type {} ({}) | Found type {} ({})",
+            "'{}' — expected {} ({}), got {} ({})",
+            path,
             value_type_name(expected),
             expected,
             value_type_name(observed),
@@ -569,10 +589,8 @@ pub fn compare_primitive_values(
 
     if !value_eq(observed, expected) {
         Err(anyhow!(
-            "Value Incorrect for ({}) 2: (Actual:{}, Expected:{})",
-            keys,
-            observed,
-            expected,
+            "'{}' — expected {}, got {}",
+            path, expected, observed
         ))
     } else {
         Ok(())
@@ -808,11 +826,10 @@ impl RunnableTestStep for TestStep {
         let mut url = match self.get_url(config) {
             Ok(actual_url) => actual_url,
             Err(_) => {
-                let identifier = self.get_identifier(prior_steps.len());
                 return Ok(TestStepResult::make_failure(
                     &self.id,
                     TestStepFailureReason::ConfigurationError,
-                    format!("No url specified for step {}", identifier),
+                    "no base URL configured — set 'urls.base' in a config file".to_string(),
                 ));
             }
         };
@@ -835,7 +852,7 @@ impl RunnableTestStep for TestStep {
                 path = new_path;
             }
             Err(e) => {
-                return Err(anyhow!("Error generating path: {}", e));
+                return Err(anyhow!("could not build request path: {}", e));
             }
         }
 
@@ -859,7 +876,7 @@ impl RunnableTestStep for TestStep {
                     let actual_status_code = response.status().as_u16();
                     if !TestStep::check_status_code(exp_status_code.clone(), actual_status_code) {
                         let failure_message = format!(
-                            "Status Code incorrect. (Actual:{}, Expected:{})",
+                            "expected status {}, got {}",
                             exp_status_code, actual_status_code,
                         );
                         return Ok(TestStepResult::make_failure(
@@ -886,7 +903,7 @@ impl RunnableTestStep for TestStep {
                                 prior_steps,
                                 !self.allow_missing_fields,
                             ) {
-                                let failure_message = format!("Assertion Error: {}", e);
+                                let failure_message = format!("{}", e);
                                 return Ok(TestStepResult::make_failure(
                                     &self.id,
                                     TestStepFailureReason::ResponseError,
@@ -898,7 +915,7 @@ impl RunnableTestStep for TestStep {
                     }
                     Err(e) => {
                         if self.expected_response_data.is_some() {
-                            let failure_message = format!("Error Decoding Json: {}", e);
+                            let failure_message = format!("response body is not valid JSON: {}", e);
                             return Ok(TestStepResult::make_failure(
                                 &self.id,
                                 TestStepFailureReason::JsonDecodeError,
@@ -909,7 +926,7 @@ impl RunnableTestStep for TestStep {
                 }
             }
             Err(e) => {
-                return Err(anyhow!("Error Sending Request: {}", e));
+                return Err(anyhow!("HTTP request failed: {}", e));
             }
         }
 
