@@ -190,21 +190,19 @@ impl Test {
 
         let mut test_steps: Vec<Arc<RwLock<dyn RunnableTestStep + Send + Sync>>> = vec![];
 
-        for step in spec.steps.into_iter() {
-            match from_value::<TestStepSpec>(step.clone()) {
-                Ok(test_step_spec) => {
-                    test_steps.push(Arc::new(RwLock::new(TestStep::from_spec(test_step_spec))));
-                }
-                Err(_) => {
-                    // Possible that it's using a test step defined in the config
-                    match step.as_str() {
-                        Some(step_name) => {
-                            test_steps.push(Arc::new(RwLock::new(
-                                TestStepGroupReference::from_id(step_name.to_owned()),
-                            )));
-                        }
-                        None => return Err(anyhow!("Error Decoding Step in test {}", name)),
+        for step in spec.steps {
+            // Check for a plain string reference first so we can move the value
+            // into from_value without cloning when it's a structured step spec.
+            if let Some(step_name) = step.as_str() {
+                test_steps.push(Arc::new(RwLock::new(
+                    TestStepGroupReference::from_id(step_name.to_owned()),
+                )));
+            } else {
+                match from_value::<TestStepSpec>(step) {
+                    Ok(test_step_spec) => {
+                        test_steps.push(Arc::new(RwLock::new(TestStep::from_spec(test_step_spec))));
                     }
+                    Err(_) => return Err(anyhow!("Error Decoding Step in test {}", name)),
                 }
             }
         }
@@ -233,11 +231,13 @@ impl Test {
                         config = Some(ConfigData::from_val(config_value, path)?);
                     }
 
-                    if let Some(mapping) = test_file.as_mapping() {
-                        for key in mapping.keys().filter_map(|v| v.as_str()) {
-                            if is_test_name(key) {
-                                if let Some(test_value) = mapping.get(key) {
-                                    match from_value::<TestSpec>(test_value.clone()) {
+                    // Consume the mapping so each test's Value can be moved
+                    // into from_value without cloning.
+                    if let Value::Mapping(mapping) = test_file {
+                        for (key_val, value) in mapping {
+                            if let Some(key) = key_val.as_str() {
+                                if is_test_name(key) {
+                                    match from_value::<TestSpec>(value) {
                                         Ok(test_spec) => {
                                             let test = Test::from_spec(
                                                 path.clone(),

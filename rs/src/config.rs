@@ -38,10 +38,10 @@ impl TestStepGroup {
         let once = spec.once.unwrap_or(false);
 
         let mut steps: Vec<Arc<dyn RunnableTestStep + Send + Sync>> = vec![];
-        for step in spec.steps.iter() {
+        for step in spec.steps {
             if let Some(step_name) = step.as_str() {
                 panic!("Need to implement step names {}", step_name);
-            } else if let Ok(test_step_spec) = from_value::<TestStepSpec>(step.clone()) {
+            } else if let Ok(test_step_spec) = from_value::<TestStepSpec>(step) {
                 steps.push(Arc::new(TestStep::from_spec(test_step_spec)));
             }
         }
@@ -204,27 +204,29 @@ impl ConfigData {
             if let Some(string_val) = value.as_str() {
                 output.insert(key, string_val.to_owned());
             } else if let Some(mapping_val) = value.as_mapping() {
-                let mut has_value = false;
-                if let Some(env_var_name_str) = mapping_val.get("env").and_then(|v| v.as_str()) {
-                    if let Ok(env_var_str) = std::env::var(env_var_name_str) {
-                        output.insert(key.clone(), env_var_str);
-                        has_value = true;
+                // Resolve env var first, fall back to default. Use or() so we
+                // can move key into exactly one of insert or the error message.
+                let env_val = mapping_val
+                    .get("env")
+                    .and_then(|v| v.as_str())
+                    .and_then(|env_name| std::env::var(env_name).ok());
+
+                let default_val = mapping_val
+                    .get("default")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_owned());
+
+                match env_val.or(default_val) {
+                    Some(val) => {
+                        output.insert(key, val);
                     }
-                }
-
-                if !has_value
-                    && let Some(default_str) = mapping_val.get("default").and_then(|v| v.as_str())
-                {
-                    output.insert(key.clone(), default_str.to_owned());
-                    has_value = true;
-                }
-
-                if !has_value {
-                    return Err(anyhow!(
-                        "Variable ({}) must be set to either a string value, \
-                        or a mapping with one or more of 'default' and 'env' values.",
-                        key
-                    ));
+                    None => {
+                        return Err(anyhow!(
+                            "Variable ({}) must be set to either a string value, \
+                            or a mapping with one or more of 'default' and 'env' values.",
+                            key
+                        ));
+                    }
                 }
             }
         }
@@ -268,8 +270,8 @@ impl ConfigData {
         })
     }
 
-    pub fn spec_from_val(value: &Value) -> anyhow::Result<ConfigSpec> {
-        from_value::<ConfigSpec>(value.clone()).map_err(|e| anyhow!("{}", e))
+    pub fn spec_from_val(value: Value) -> anyhow::Result<ConfigSpec> {
+        from_value::<ConfigSpec>(value).map_err(|e| anyhow!("{}", e))
     }
 
     pub fn spec_from_file(path: &PathBuf) -> Result<ConfigSpec> {
@@ -278,11 +280,11 @@ impl ConfigData {
         let reader = BufReader::new(file);
         serde_yaml::from_reader::<_, Value>(reader)
             .map_err(|e| anyhow!(e))
-            .and_then(|v| ConfigData::spec_from_val(&v))
+            .and_then(ConfigData::spec_from_val)
     }
 
     pub fn from_val(value: &Value, path: &PathBuf) -> Result<ConfigData> {
-        ConfigData::spec_from_val(value).and_then(|v| ConfigData::from_spec(path, v))
+        ConfigData::spec_from_val(value.clone()).and_then(|v| ConfigData::from_spec(path, v))
     }
 
     pub fn from_file(path: &PathBuf) -> Result<ConfigData> {
