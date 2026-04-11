@@ -111,13 +111,13 @@ impl TestResult {
     pub fn make_failure_from_error(
         test_name: &String,
         test_path: &PathBuf,
-        step_id: Option<String>,
+        step_id: Option<&str>,
         failure_reason: TestStepFailureReason,
         error_prefix: String,
         error: Error,
     ) -> TestResult {
         let step_result = TestStepResult::make_failure(
-            &step_id,
+            step_id,
             failure_reason,
             format!("{}: {}", error_prefix, error),
         );
@@ -156,23 +156,43 @@ impl Test {
     pub fn add_config(&mut self, config: Arc<RwLock<ConfigData>>) {
         match &self.config {
             Some(cfg) => {
-                let o_new_config_dir = config.read().unwrap().path.clone();
-                let o_current_config_dir = cfg.read().unwrap().path.clone();
+                enum Relation {
+                    NewIsParent,
+                    CurrentIsParent,
+                    Unrelated(String, String),
+                    NoParents,
+                }
 
-                if let (Some(new_dir), Some(current_dir)) =
-                    (o_new_config_dir.parent(), o_current_config_dir.parent())
-                {
-                    if current_dir.starts_with(new_dir) {
-                        cfg.write().unwrap().set_parent(config);
-                    } else if new_dir.starts_with(current_dir) {
-                        config.write().unwrap().set_parent(Arc::clone(cfg));
-                    } else {
-                        panic!(
-                            "ERROR: Cannot set parentage with unrelated configs {} {}",
-                            new_dir.display(),
-                            current_dir.display()
-                        );
+                let relation = {
+                    let new_guard = config.read().unwrap();
+                    let cfg_guard = cfg.read().unwrap();
+                    match (new_guard.path.parent(), cfg_guard.path.parent()) {
+                        (Some(new_dir), Some(current_dir)) => {
+                            if current_dir.starts_with(new_dir) {
+                                Relation::NewIsParent
+                            } else if new_dir.starts_with(current_dir) {
+                                Relation::CurrentIsParent
+                            } else {
+                                Relation::Unrelated(
+                                    new_dir.display().to_string(),
+                                    current_dir.display().to_string(),
+                                )
+                            }
+                        }
+                        _ => Relation::NoParents,
                     }
+                };
+
+                match relation {
+                    Relation::NewIsParent => cfg.write().unwrap().set_parent(config),
+                    Relation::CurrentIsParent => {
+                        config.write().unwrap().set_parent(Arc::clone(cfg));
+                    }
+                    Relation::Unrelated(a, b) => panic!(
+                        "ERROR: Cannot set parentage with unrelated configs {} {}",
+                        a, b
+                    ),
+                    Relation::NoParents => {}
                 }
             }
             None => {
@@ -226,9 +246,13 @@ impl Test {
             let reader = BufReader::new(file);
             let test_file_result = serde_yaml::from_reader::<_, Value>(reader);
             match test_file_result {
-                Ok(test_file) => {
-                    if let Some(config_value) = test_file.get("config") {
-                        config = Some(ConfigData::from_val(config_value, path)?);
+                Ok(mut test_file) => {
+                    // Extract the config entry by value (removing it from the mapping)
+                    // so we can pass it to from_val without cloning.
+                    if let Value::Mapping(ref mut mapping) = test_file {
+                        if let Some(config_value) = mapping.remove("config") {
+                            config = Some(ConfigData::from_val(config_value, path)?);
+                        }
                     }
 
                     // Consume the mapping so each test's Value can be moved
@@ -282,7 +306,7 @@ impl Test {
                         return TestResult::make_failure_from_error(
                             &self.name,
                             &self.path,
-                            Some("setup".to_owned()),
+                            Some("setup"),
                             TestStepFailureReason::Miscellaneous,
                             "setup failed".to_owned(),
                             e,
@@ -293,7 +317,7 @@ impl Test {
                     return TestResult::make_failure_from_error(
                         &self.name,
                         &self.path,
-                        Some("setup".to_owned()),
+                        Some("setup"),
                         TestStepFailureReason::SharedStepNotFoundError,
                         "setup step-set not found".to_owned(),
                         e,
@@ -313,7 +337,7 @@ impl Test {
                     }
                 }
                 Err(e) => {
-                    let step_id = real_step.get_id().cloned();
+                    let step_id = real_step.get_id().map(String::as_str);
                     return TestResult::make_failure_from_error(
                         &self.name,
                         &self.path,
@@ -336,7 +360,7 @@ impl Test {
                         return TestResult::make_failure_from_error(
                             &self.name,
                             &self.path,
-                            Some("teardown".to_owned()),
+                            Some("teardown"),
                             TestStepFailureReason::Miscellaneous,
                             "teardown failed".to_owned(),
                             e,
@@ -347,7 +371,7 @@ impl Test {
                     return TestResult::make_failure_from_error(
                         &self.name,
                         &self.path,
-                        Some("teardown".to_owned()),
+                        Some("teardown"),
                         TestStepFailureReason::SharedStepNotFoundError,
                         "teardown step-set not found".to_owned(),
                         e,

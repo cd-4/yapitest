@@ -34,7 +34,7 @@ pub struct TestStepGroupReference {
 }
 
 impl TestStepGroup {
-    pub fn from_spec(id: String, spec: TestStepGroupSpec, path: &PathBuf) -> TestStepGroup {
+    pub fn from_spec(id: &str, spec: TestStepGroupSpec, path: &PathBuf) -> TestStepGroup {
         let once = spec.once.unwrap_or(false);
 
         let mut steps: Vec<Arc<dyn RunnableTestStep + Send + Sync>> = vec![];
@@ -47,7 +47,7 @@ impl TestStepGroup {
         }
 
         TestStepGroup {
-            id,
+            id: id.to_owned(),
             steps,
             run_once: once,
             outputs: spec.output,
@@ -69,12 +69,12 @@ impl TestStepGroup {
         prior_steps: &HashMap<String, TestStepResult>,
     ) -> Result<TestStepResult> {
         // Run Steps
-        let mut local_steps: HashMap<String, TestStepResult> = HashMap::new();
+        let mut local_steps: HashMap<&str, TestStepResult> = HashMap::new();
         for step in self.steps.iter() {
             match step.run(config, prior_steps).await {
                 Ok(result) => {
                     if let Some(id) = step.get_id() {
-                        local_steps.insert(id.clone(), result);
+                        local_steps.insert(id.as_str(), result);
                     }
                 }
                 Err(e) => {
@@ -85,7 +85,7 @@ impl TestStepGroup {
         }
 
         // Process Outputs
-        let mut outputs: HashMap<String, serde_json::Value> = HashMap::new();
+        let mut outputs: HashMap<&str, serde_json::Value> = HashMap::new();
 
         for (output_key, output_value) in self.outputs.iter() {
             if output_value.starts_with('$') {
@@ -106,7 +106,7 @@ impl TestStepGroup {
                     if let Ok(val) = step.get_field(&field_key) {
                         if let Some(yaml_val) = val {
                             if let Ok(v) = serde_json::from_value(yaml_val) {
-                                outputs.insert(output_key.clone(), v);
+                                outputs.insert(output_key.as_str(), v);
                                 continue;
                             }
                         }
@@ -125,7 +125,7 @@ impl TestStepGroup {
         }
 
         let result = TestStepResult::make_success(
-            Some(self.id.clone()),
+            Some(self.id.as_str()),
             serde_yaml::from_value(Value::Null)?,
             serde_yaml::from_value(Value::Null)?,
             serde_json::to_value(outputs)?,
@@ -241,7 +241,7 @@ impl ConfigData {
                 step_set_specs
                     .into_iter()
                     .map(|(k, v)| {
-                        let group = TestStepGroup::from_spec(k.clone(), v, path);
+                        let group = TestStepGroup::from_spec(&k, v, path);
                         (k, group)
                     })
                     .collect(),
@@ -283,8 +283,8 @@ impl ConfigData {
             .and_then(ConfigData::spec_from_val)
     }
 
-    pub fn from_val(value: &Value, path: &PathBuf) -> Result<ConfigData> {
-        ConfigData::spec_from_val(value.clone()).and_then(|v| ConfigData::from_spec(path, v))
+    pub fn from_val(value: Value, path: &PathBuf) -> Result<ConfigData> {
+        ConfigData::spec_from_val(value).and_then(|v| ConfigData::from_spec(path, v))
     }
 
     pub fn from_file(path: &PathBuf) -> Result<ConfigData> {

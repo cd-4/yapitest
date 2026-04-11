@@ -540,12 +540,12 @@ pub fn compare_data(
 
 impl TestStepResult {
     pub fn make_failure(
-        step_id: &Option<String>,
+        step_id: Option<&str>,
         reason: TestStepFailureReason,
         message: String,
     ) -> TestStepResult {
         TestStepResult {
-            step_id: step_id.clone(),
+            step_id: step_id.map(str::to_owned),
             status: reason,
             response_data: None,
             request_data: None,
@@ -555,13 +555,13 @@ impl TestStepResult {
     }
 
     pub fn make_success(
-        step_id: Option<String>,
+        step_id: Option<&str>,
         response_data: Value,
         request_data: Value,
         output_data: Value,
     ) -> TestStepResult {
         TestStepResult {
-            step_id,
+            step_id: step_id.map(str::to_owned),
             status: TestStepFailureReason::NoFailure,
             response_data: Some(response_data),
             request_data: Some(request_data),
@@ -711,7 +711,7 @@ impl RunnableTestStep for TestStep {
             Ok(actual_url) => actual_url,
             Err(_) => {
                 return Ok(TestStepResult::make_failure(
-                    &self.id,
+                    self.id.as_deref(),
                     TestStepFailureReason::ConfigurationError,
                     "no base URL configured — set 'urls.base' in a config file".to_string(),
                 ));
@@ -758,7 +758,7 @@ impl RunnableTestStep for TestStep {
                             exp_status_code, actual_status_code,
                         );
                         return Ok(TestStepResult::make_failure(
-                            &self.id,
+                            self.id.as_deref(),
                             TestStepFailureReason::StatusCodeError,
                             failure_message,
                         ));
@@ -778,7 +778,7 @@ impl RunnableTestStep for TestStep {
                                 !self.allow_missing_fields,
                             ) {
                                 return Ok(TestStepResult::make_failure(
-                                    &self.id,
+                                    self.id.as_deref(),
                                     TestStepFailureReason::ResponseError,
                                     format!("{}", e),
                                 ));
@@ -790,7 +790,7 @@ impl RunnableTestStep for TestStep {
                     Err(e) => {
                         if self.expected_response_data.is_some() {
                             return Ok(TestStepResult::make_failure(
-                                &self.id,
+                                self.id.as_deref(),
                                 TestStepFailureReason::JsonDecodeError,
                                 format!("response body is not valid JSON: {}", e),
                             ));

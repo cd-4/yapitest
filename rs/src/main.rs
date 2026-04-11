@@ -223,14 +223,14 @@ async fn run_tests(tests: &[Test], threads: Option<u64>) -> Vec<TestResult> {
     // same file share state through config step-sets (e.g. `once: true` groups
     // like `create-user`), so they must run sequentially on the same thread to
     // avoid concurrent mutations of shared API state.
-    let mut file_order: Vec<PathBuf> = Vec::new();
-    let mut file_groups: HashMap<PathBuf, Vec<Test>> = HashMap::new();
+    let mut file_order: Vec<&PathBuf> = Vec::new();
+    let mut file_groups: HashMap<&PathBuf, Vec<Test>> = HashMap::new();
 
     for test in tests {
         let path = test.path();
-        match file_groups.entry(path.clone()) {
+        match file_groups.entry(path) {
             Entry::Vacant(e) => {
-                file_order.push(path.clone());
+                file_order.push(path);
                 e.insert(vec![test.clone()]);
             }
             Entry::Occupied(e) => {
@@ -245,7 +245,7 @@ async fn run_tests(tests: &[Test], threads: Option<u64>) -> Vec<TestResult> {
     let mut thread_groups: Vec<Vec<Test>> = (0..actual_threads).map(|_| Vec::new()).collect();
 
     for (i, path) in file_order.into_iter().enumerate() {
-        if let Some(group) = file_groups.remove(&path) {
+        if let Some(group) = file_groups.remove(path) {
             thread_groups[i % actual_threads].extend(group);
         }
     }
