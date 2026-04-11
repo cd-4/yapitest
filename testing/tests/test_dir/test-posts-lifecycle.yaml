@@ -24,6 +24,7 @@ test-post-fields:
           body: "Field test body content"
           id: +int
           user_id: +int
+          meta: +dict
 
 test-get-nonexistent-post:
   steps:

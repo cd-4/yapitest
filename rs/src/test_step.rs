@@ -54,7 +54,7 @@ pub struct TestStep {
     allow_missing_fields: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TestStepResult {
     step_id: Option<String>,
     pub response_data: Option<Value>,
@@ -64,60 +64,20 @@ pub struct TestStepResult {
     pub failure_message: Option<String>,
 }
 
-impl Clone for TestStepResult {
-    fn clone(&self) -> Self {
-        let mut response_data: Option<Value> = None;
-        let mut request_data: Option<Value> = None;
-        let mut output_data: Option<Value> = None;
-        let mut failure_message: Option<String> = None;
-        let mut step_id: Option<String> = None;
-
-        if let Some(x) = &self.response_data {
-            response_data = Some(x.clone());
-        }
-
-        if let Some(x) = &self.request_data {
-            request_data = Some(x.clone());
-        }
-
-        if let Some(x) = &self.output_data {
-            output_data = Some(x.clone());
-        }
-
-        if let Some(x) = &self.failure_message {
-            failure_message = Some(x.clone());
-        }
-
-        if let Some(id) = &self.step_id {
-            step_id = Some(id.clone());
-        }
-
-        TestStepResult {
-            step_id,
-            response_data,
-            request_data,
-            output_data,
-            status: self.status,
-            failure_message,
-        }
-    }
-}
-
 pub fn get_variable(
-    name: String,
+    name: &str,
     config: &Option<Arc<RwLock<ConfigData>>>,
     prior_steps: &HashMap<String, TestStepResult>,
 ) -> Result<Value> {
     if !name.starts_with('$') {
-        return Ok(Value::String(name));
+        return Ok(Value::String(name.to_owned()));
     }
-    let mut current_key = name.clone();
+    let mut current_key = name.to_owned();
     'outer: while current_key.starts_with('$') {
-        let mut value_key = current_key.clone();
-        value_key.remove(0);
+        let value_key = &current_key[1..];
 
         if let Some(cfg) = config {
-            if let Ok(new_val) = cfg.read().unwrap().get_string_value(value_key.clone()) {
+            if let Ok(new_val) = cfg.read().unwrap().get_string_value(value_key) {
                 current_key = new_val;
                 if current_key.starts_with('$') {
                     continue 'outer;
@@ -127,22 +87,18 @@ pub fn get_variable(
             }
         }
 
-        let mut segments: Vec<String> = value_key
-            .clone()
-            .split('.')
-            .map(|v| v.to_string())
-            .collect();
+        let mut segments: Vec<&str> = value_key.split('.').collect();
 
-        if let Some(step) = segments.first().and_then(|v| prior_steps.get(v)) {
-            let step_id = segments[0].clone();
+        if let Some(step) = segments.first().copied().and_then(|v| prior_steps.get(v)) {
+            let step_id = segments[0];
             segments.remove(0);
             let field_key = segments.join(".");
-            match step.get_field(field_key.clone()) {
+            match step.get_field(&field_key) {
                 Ok(field_val) => {
                     if let Some(val) = field_val {
                         if let Some(value_str) = val.as_str() {
-                            if value_str.starts_with("$") {
-                                current_key = value_str.to_string();
+                            if value_str.starts_with('$') {
+                                current_key = value_str.to_owned();
                                 continue 'outer;
                             }
                         }
@@ -178,37 +134,20 @@ pub fn clean_request_data(
     prior_steps: &HashMap<String, TestStepResult>,
 ) -> Result<Value> {
     if let Some(data_map) = request_data.as_object() {
-        let mut new_value = data_map.clone();
-        for (k, v) in data_map.iter() {
-            match clean_request_data(v, config, prior_steps) {
-                Ok(val) => {
-                    new_value.insert(k.clone(), val);
-                }
-                Err(e) => {
-                    return Err(e);
-                }
-            }
+        let mut new_value = Map::with_capacity(data_map.len());
+        for (k, v) in data_map {
+            new_value.insert(k.clone(), clean_request_data(v, config, prior_steps)?);
         }
-        Ok(Value::from(new_value))
+        Ok(Value::Object(new_value))
     } else if let Some(data_arr) = request_data.as_array() {
-        let mut new_val: Vec<Value> = data_arr.clone();
-        for item in data_arr.iter() {
-            match clean_request_data(item, config, prior_steps) {
-                Ok(val) => {
-                    new_val.push(val);
-                }
-                Err(e) => {
-                    return Err(e);
-                }
-            }
+        let mut new_val = Vec::with_capacity(data_arr.len());
+        for item in data_arr {
+            new_val.push(clean_request_data(item, config, prior_steps)?);
         }
-        Ok(Value::from(new_val))
+        Ok(Value::Array(new_val))
     } else if let Some(data_str) = request_data.as_str() {
-        if data_str.starts_with("$") {
-            match get_variable(data_str.to_string(), config, prior_steps) {
-                Ok(var) => Ok(var),
-                Err(e) => Err(e),
-            }
+        if data_str.starts_with('$') {
+            get_variable(data_str, config, prior_steps)
         } else {
             Ok(Value::from(data_str))
         }
@@ -218,19 +157,19 @@ pub fn clean_request_data(
 }
 
 pub fn clean_path(
-    path: String,
+    path: &str,
     config: &Option<Arc<RwLock<ConfigData>>>,
     prior_steps: &HashMap<String, TestStepResult>,
 ) -> Result<String> {
-    let ends_with_slash = path.ends_with("/");
+    let ends_with_slash = path.ends_with('/');
 
     let mut segments: Vec<String> = vec![];
 
-    for segment in path.split("/") {
-        if segment.starts_with("$") {
-            let new_seg = get_variable(segment.to_string(), config, prior_steps)?;
+    for segment in path.split('/') {
+        if segment.starts_with('$') {
+            let new_seg = get_variable(segment, config, prior_steps)?;
             if let Some(seg_str) = new_seg.as_str() {
-                segments.push(seg_str.to_string());
+                segments.push(seg_str.to_owned());
             } else if let Some(seg_int) = new_seg.as_i64() {
                 segments.push(format!("{}", seg_int));
             } else {
@@ -241,7 +180,7 @@ pub fn clean_path(
                 ));
             }
         } else {
-            segments.push(segment.to_string());
+            segments.push(segment.to_owned());
         }
     }
     let mut output = segments.join("/");
@@ -258,9 +197,9 @@ pub fn clean_headers(
     prior_steps: &HashMap<String, TestStepResult>,
 ) -> Result<HeaderMap> {
     let mut output: HeaderMap = HeaderMap::new();
-    for (k, v) in header_data.iter() {
-        if v.starts_with("$") {
-            match get_variable(v.to_string(), config, prior_steps) {
+    for (k, v) in header_data {
+        if v.starts_with('$') {
+            match get_variable(v, config, prior_steps) {
                 Ok(header_value) => {
                     if let Some(header_str) = header_value.as_str() {
                         let name = HeaderName::from_bytes(k.as_bytes()).unwrap();
@@ -298,11 +237,10 @@ enum Operator {
 #[derive(Debug, PartialEq)]
 struct Comparison {
     op: Operator,
-    value: i64, // or f64 if you need floats
+    value: i64,
 }
 
 fn parse_comparison(s: &str) -> Result<Comparison, String> {
-    // Matches optional spaces around the operator and number
     let re = Regex::new(r"^\s*([<>]=?|=?)\s*(\d+)\s*$").map_err(|e| e.to_string())?;
 
     let caps = re
@@ -317,7 +255,7 @@ fn parse_comparison(s: &str) -> Result<Comparison, String> {
         ">=" => Operator::Gte,
         "<" => Operator::Lt,
         "<=" => Operator::Lte,
-        "=" | "" => Operator::Eq, // allow "=" or even just the number (treat as =)
+        "=" | "" => Operator::Eq,
         _ => return Err(format!("Unknown operator: {}", op_str)),
     };
 
@@ -341,30 +279,18 @@ pub fn get_value_length(val: &Value) -> Result<i64> {
     ))
 }
 
-pub fn check_size(val: &Value, size_str: String) -> Result<bool> {
+pub fn check_size(val: &Value, size_str: &str) -> Result<bool> {
     let value_size = get_value_length(val)?;
 
-    match parse_comparison(&size_str) {
+    match parse_comparison(size_str) {
         Ok(cmp) => match cmp.op {
-            Operator::Gt => {
-                return Ok(value_size > cmp.value);
-            }
-            Operator::Lt => {
-                return Ok(value_size < cmp.value);
-            }
-            Operator::Eq => {
-                return Ok(value_size == cmp.value);
-            }
-            Operator::Gte => {
-                return Ok(value_size >= cmp.value);
-            }
-            Operator::Lte => {
-                return Ok(value_size <= cmp.value);
-            }
+            Operator::Gt => Ok(value_size > cmp.value),
+            Operator::Lt => Ok(value_size < cmp.value),
+            Operator::Eq => Ok(value_size == cmp.value),
+            Operator::Gte => Ok(value_size >= cmp.value),
+            Operator::Lte => Ok(value_size <= cmp.value),
         },
-        Err(e) => {
-            return Err(anyhow!("invalid size comparison '{}': {}", size_str, e));
-        }
+        Err(e) => Err(anyhow!("invalid size comparison '{}': {}", size_str, e)),
     }
 }
 
@@ -372,7 +298,7 @@ pub fn compare_data_objects(
     observed_object: &Map<String, Value>,
     expected_object: &Map<String, Value>,
     full: bool,
-    keys: String,
+    keys: &str,
     config: &Option<Arc<RwLock<ConfigData>>>,
     prior_steps: &HashMap<String, TestStepResult>,
 ) -> Result<()> {
@@ -390,22 +316,16 @@ pub fn compare_data_objects(
             Some(v) => v,
             None => {
                 let path = if keys.is_empty() {
-                    key.clone()
+                    key.as_str()
                 } else {
-                    format!("{}.{}", keys.trim_start_matches('.'), key)
+                    &format!("{}.{}", keys.trim_start_matches('.'), key)
                 };
                 return Err(anyhow!("missing field '{}' in response", path));
             }
         };
 
-        compare_data_inner(
-            observed,
-            expected,
-            full,
-            format!("{}.{}", keys, key),
-            config,
-            prior_steps,
-        )?;
+        let new_keys = format!("{}.{}", keys, key);
+        compare_data_inner(observed, expected, full, &new_keys, config, prior_steps)?;
     }
 
     // Walk observed keys for `len(field)` size checks and the `full` mode check
@@ -413,16 +333,16 @@ pub fn compare_data_objects(
     for key in observed_object.keys() {
         let observed = observed_object.get(key).unwrap();
 
-        let size_str = format!("len({})", key);
-        if let Some(expected_size) = expected_object.get(&size_str) {
-            let cmp_str = expected_size.as_str().unwrap().to_string();
+        let size_key = format!("len({})", key);
+        if let Some(expected_size) = expected_object.get(&size_key) {
+            let cmp_str = expected_size.as_str().unwrap();
             let field_path = if keys.is_empty() {
-                key.clone()
+                key.as_str()
             } else {
-                format!("{}.{}", keys.trim_start_matches('.'), key)
+                &format!("{}.{}", keys.trim_start_matches('.'), key)
             };
             match get_value_length(observed) {
-                Ok(actual_len) => match check_size(observed, cmp_str.clone()) {
+                Ok(actual_len) => match check_size(observed, cmp_str) {
                     Ok(true) => {}
                     Ok(false) => {
                         return Err(anyhow!(
@@ -441,9 +361,9 @@ pub fn compare_data_objects(
             }
         } else if full && !expected_object.contains_key(key) {
             let field_path = if keys.is_empty() {
-                key.clone()
+                key.as_str()
             } else {
-                format!("{}.{}", keys.trim_start_matches('.'), key)
+                &format!("{}.{}", keys.trim_start_matches('.'), key)
             };
             return Err(anyhow!(
                 "unexpected field '{}' in response — add it to the 'body' assertion or remove 'full: true'",
@@ -456,10 +376,10 @@ pub fn compare_data_objects(
 }
 
 pub fn compare_array_objects(
-    observed_object: &Vec<Value>,
-    expected_object: &Vec<Value>,
+    observed_object: &[Value],
+    expected_object: &[Value],
     full: bool,
-    keys: String,
+    keys: &str,
     config: &Option<Arc<RwLock<ConfigData>>>,
     prior_steps: &HashMap<String, TestStepResult>,
 ) -> Result<()> {
@@ -473,13 +393,9 @@ pub fn compare_array_objects(
         ));
     }
 
-    for (index, (observed, expected)) in observed_object
-        .iter()
-        .zip(expected_object.iter())
-        .enumerate()
-    {
+    for (index, (observed, expected)) in observed_object.iter().zip(expected_object.iter()).enumerate() {
         let new_keys = format!("{}.[{}]", keys, index);
-        compare_data_inner(observed, expected, full, new_keys, config, prior_steps)?;
+        compare_data_inner(observed, expected, full, &new_keys, config, prior_steps)?;
     }
 
     Ok(())
@@ -499,13 +415,12 @@ fn value_type_name(v: &Value) -> &'static str {
     } else if v.is_object() {
         "Object"
     } else {
-        "Unknown" // should never happen
+        "Unknown"
     }
 }
 
 fn value_eq(a: &Value, b: &Value) -> bool {
     match (a, b) {
-        // Same type → normal comparison
         (Value::Null, Value::Null) => true,
         (Value::Bool(x), Value::Bool(y)) => x == y,
         (Value::Number(x), Value::Number(y)) => x == y,
@@ -520,7 +435,6 @@ fn value_eq(a: &Value, b: &Value) -> bool {
             x.iter()
                 .all(|(k, v)| y.get(k).map_or(false, |yv| value_eq(v, yv)))
         }
-
         _ => false,
     }
 }
@@ -528,7 +442,7 @@ fn value_eq(a: &Value, b: &Value) -> bool {
 pub fn compare_primitive_values(
     observed: &Value,
     expected: &Value,
-    keys: String,
+    keys: &str,
     config: &Option<Arc<RwLock<ConfigData>>>,
     prior_steps: &HashMap<String, TestStepResult>,
 ) -> Result<()> {
@@ -564,7 +478,7 @@ pub fn compare_primitive_values(
             }
             return Ok(());
         } else if exp_str.starts_with('$') {
-            let exp_var = get_variable(exp_str.to_string(), config, prior_steps)?;
+            let exp_var = get_variable(exp_str, config, prior_steps)?;
             if !value_eq(&exp_var, observed) {
                 return Err(anyhow!(
                     "'{}' — expected {}, got {}",
@@ -601,7 +515,7 @@ pub fn compare_data_inner(
     observed: &Value,
     expected: &Value,
     full: bool,
-    keys: String,
+    keys: &str,
     config: &Option<Arc<RwLock<ConfigData>>>,
     prior_steps: &HashMap<String, TestStepResult>,
 ) -> Result<()> {
@@ -621,24 +535,17 @@ pub fn compare_data(
     prior_steps: &HashMap<String, TestStepResult>,
     full: bool,
 ) -> Result<()> {
-    compare_data_inner(
-        observed,
-        expected,
-        full,
-        "".to_string(),
-        config,
-        prior_steps,
-    )
+    compare_data_inner(observed, expected, full, "", config, prior_steps)
 }
 
 impl TestStepResult {
     pub fn make_failure(
-        step_id: &Option<String>,
+        step_id: Option<&str>,
         reason: TestStepFailureReason,
         message: String,
     ) -> TestStepResult {
         TestStepResult {
-            step_id: step_id.clone(),
+            step_id: step_id.map(str::to_owned),
             status: reason,
             response_data: None,
             request_data: None,
@@ -648,13 +555,13 @@ impl TestStepResult {
     }
 
     pub fn make_success(
-        step_id: Option<String>,
+        step_id: Option<&str>,
         response_data: Value,
         request_data: Value,
         output_data: Value,
     ) -> TestStepResult {
         TestStepResult {
-            step_id,
+            step_id: step_id.map(str::to_owned),
             status: TestStepFailureReason::NoFailure,
             response_data: Some(response_data),
             request_data: Some(request_data),
@@ -663,45 +570,38 @@ impl TestStepResult {
         }
     }
 
-    pub fn get_field(&self, keys: String) -> Result<Option<Value>> {
-        let sections: Vec<&str> = keys.split(".").collect();
-
+    pub fn get_field(&self, keys: &str) -> Result<Option<Value>> {
+        let sections: Vec<&str> = keys.split('.').collect();
+        let mut current: Option<&Value> = None;
         let mut first = true;
-        let mut return_value: Option<Value> = None;
 
-        if self.output_data.is_some() {
-            return_value = self.output_data.clone();
+        // Step group results store outputs directly; skip namespace routing.
+        if let Some(output) = &self.output_data {
+            current = Some(output);
             first = false;
         }
 
-        for section in sections.iter() {
+        for section in &sections {
             if first {
-                if *section == "response" {
-                    return_value = self.response_data.clone();
-                } else if *section == "request" || *section == "data" {
-                    return_value = self.request_data.clone();
-                } else if *section == "output" {
-                    return_value = self.output_data.clone();
-                } else {
-                    return Err(anyhow!("Section {} not found in step", section));
-                }
+                current = match *section {
+                    "response" => self.response_data.as_ref(),
+                    "request" | "data" => self.request_data.as_ref(),
+                    "output" => self.output_data.as_ref(),
+                    _ => return Err(anyhow!("Section {} not found in step", section)),
+                };
                 first = false;
             } else {
-                if let Some(new_val) = return_value.clone() {
-                    if let Some(obj_val) = new_val.as_object() {
-                        if let Some(new) = obj_val.get(*section) {
-                            return_value = Some(new.clone());
-                        }
-                    }
-                }
+                current = current
+                    .and_then(|v| v.as_object())
+                    .and_then(|obj| obj.get(*section));
             }
         }
-        Ok(return_value.clone())
+        Ok(current.cloned())
     }
 }
 
 impl TestStep {
-    fn check_status_code(exp: Value, actual: u16) -> bool {
+    fn check_status_code(exp: &Value, actual: u16) -> bool {
         if let Some(int_val) = exp.as_u64() {
             return int_val == u64::from(actual);
         }
@@ -715,43 +615,28 @@ impl TestStep {
                 .zip(act_str.chars())
                 .all(|(exp_char, act_char)| exp_char == 'x' || exp_char == act_char);
         }
-        return false;
-    }
-
-    fn get_identifier(&self, num_prior_steps: usize) -> String {
-        match &self.id {
-            Some(id) => id.clone(),
-            None => num_prior_steps.to_string(),
-        }
+        false
     }
 
     fn get_url(&self, config: &Option<Arc<RwLock<ConfigData>>>) -> Result<String> {
-        // If URL is defined, return it
         if let Some(url_val) = &self.url {
-            if url_val.starts_with("$") {
-                let mut config_key = url_val.clone();
-                config_key.remove(0);
+            if url_val.starts_with('$') {
                 if let Some(cfg) = config {
-                    return cfg.read().unwrap().get_string_value(config_key);
+                    return cfg.read().unwrap().get_string_value(&url_val[1..]);
                 }
             } else {
                 return Ok(url_val.clone());
             }
         }
         if let Some(cfg) = config {
-            return cfg
-                .read()
-                .unwrap()
-                .get_string_value("urls.base".to_string());
+            return cfg.read().unwrap().get_string_value("urls.base");
         }
-
-        return Err(anyhow!("Url not found"));
+        Err(anyhow!("Url not found"))
     }
 
     fn get_method(method_str: Option<String>) -> Method {
         if let Some(method) = method_str {
             let upper_method = method.to_uppercase();
-
             match Method::from_str(&upper_method) {
                 Ok(method_enum) => method_enum,
                 Err(e) => {
@@ -759,7 +644,7 @@ impl TestStep {
                 }
             }
         } else {
-            return Method::GET;
+            Method::GET
         }
     }
 
@@ -822,44 +707,38 @@ impl RunnableTestStep for TestStep {
     ) -> Result<TestStepResult> {
         let client = Client::new();
 
-        // let mut url: String = "".to_string();
         let mut url = match self.get_url(config) {
             Ok(actual_url) => actual_url,
             Err(_) => {
                 return Ok(TestStepResult::make_failure(
-                    &self.id,
+                    self.id.as_deref(),
                     TestStepFailureReason::ConfigurationError,
                     "no base URL configured — set 'urls.base' in a config file".to_string(),
                 ));
             }
         };
 
-        if let Some(last_char) = url.chars().last()
-            && last_char == '/'
-        {
+        if url.ends_with('/') {
             url.pop();
         }
 
-        let mut path = self.path.clone();
-        if let Some(first_char) = self.path.chars().next()
-            && first_char != '/'
-        {
-            path.insert(0, '/');
-        }
+        // Avoid cloning path when it already has the leading slash.
+        let path_owned;
+        let path: &str = if self.path.starts_with('/') {
+            &self.path
+        } else {
+            path_owned = format!("/{}", self.path);
+            &path_owned
+        };
 
-        match clean_path(path, config, prior_steps) {
-            Ok(new_path) => {
-                path = new_path;
-            }
-            Err(e) => {
-                return Err(anyhow!("could not build request path: {}", e));
-            }
-        }
+        let path = match clean_path(path, config, prior_steps) {
+            Ok(p) => p,
+            Err(e) => return Err(anyhow!("could not build request path: {}", e)),
+        };
 
         let full_url = format!("{}{}", url, path);
 
         let headers = clean_headers(&self.header_data, config, prior_steps)?;
-
         let req_data = clean_request_data(&self.request_data, config, prior_steps)?;
         let mut response_data: Option<Value> = None;
 
@@ -871,16 +750,15 @@ impl RunnableTestStep for TestStep {
             .await
         {
             Ok(response) => {
-                // Check if Status Code is correct
                 if let Some(exp_status_code) = &self.expected_status_code {
                     let actual_status_code = response.status().as_u16();
-                    if !TestStep::check_status_code(exp_status_code.clone(), actual_status_code) {
+                    if !TestStep::check_status_code(exp_status_code, actual_status_code) {
                         let failure_message = format!(
                             "expected status {}, got {}",
                             exp_status_code, actual_status_code,
                         );
                         return Ok(TestStepResult::make_failure(
-                            &self.id,
+                            self.id.as_deref(),
                             TestStepFailureReason::StatusCodeError,
                             failure_message,
                         ));
@@ -888,38 +766,33 @@ impl RunnableTestStep for TestStep {
                 }
 
                 let res_text = response.text().await?;
-                // For debugging
-                // println!("{}", res_text);
 
-                // Try to decode JSON
-                match serde_json::from_str(&res_text) {
-                    //match response.json::<Value>().await {
+                match serde_json::from_str::<Value>(&res_text) {
                     Ok(actual_response) => {
-                        if let Some(expected_response) = self.expected_response_data.clone() {
+                        if let Some(expected_response) = &self.expected_response_data {
                             if let Err(e) = compare_data(
                                 &actual_response,
-                                &expected_response,
+                                expected_response,
                                 config,
                                 prior_steps,
                                 !self.allow_missing_fields,
                             ) {
-                                let failure_message = format!("{}", e);
                                 return Ok(TestStepResult::make_failure(
-                                    &self.id,
+                                    self.id.as_deref(),
                                     TestStepFailureReason::ResponseError,
-                                    failure_message,
+                                    format!("{}", e),
                                 ));
                             }
                         }
-                        response_data = Some(actual_response.clone());
+                        // Move actual_response rather than cloning it.
+                        response_data = Some(actual_response);
                     }
                     Err(e) => {
                         if self.expected_response_data.is_some() {
-                            let failure_message = format!("response body is not valid JSON: {}", e);
                             return Ok(TestStepResult::make_failure(
-                                &self.id,
+                                self.id.as_deref(),
                                 TestStepFailureReason::JsonDecodeError,
-                                failure_message,
+                                format!("response body is not valid JSON: {}", e),
                             ));
                         }
                     }
@@ -930,18 +803,13 @@ impl RunnableTestStep for TestStep {
             }
         }
 
-        let mut step_id: Option<String> = None;
-        if let Some(id) = &self.id {
-            step_id = Some(id.clone());
-        }
-
-        return Ok(TestStepResult {
-            step_id,
+        Ok(TestStepResult {
+            step_id: self.id.clone(),
             status: TestStepFailureReason::NoFailure,
             failure_message: None,
             request_data: Some(req_data),
             response_data,
             output_data: None,
-        });
+        })
     }
 }

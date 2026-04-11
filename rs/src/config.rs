@@ -34,27 +34,20 @@ pub struct TestStepGroupReference {
 }
 
 impl TestStepGroup {
-    pub fn from_spec(id: String, spec: TestStepGroupSpec, path: &PathBuf) -> TestStepGroup {
-        let mut once = false;
-        if let Some(run_once) = spec.once
-            && run_once
-        {
-            once = true;
-        }
+    pub fn from_spec(id: &str, spec: TestStepGroupSpec, path: &PathBuf) -> TestStepGroup {
+        let once = spec.once.unwrap_or(false);
 
         let mut steps: Vec<Arc<dyn RunnableTestStep + Send + Sync>> = vec![];
-        for step in spec.steps.iter() {
+        for step in spec.steps {
             if let Some(step_name) = step.as_str() {
                 panic!("Need to implement step names {}", step_name);
-            } else if let Ok(test_step_spec) = from_value::<TestStepSpec>(step.clone()) {
-                let test_step = TestStep::from_spec(test_step_spec);
-                let test_step_rc: Arc<TestStep> = Arc::new(test_step);
-                steps.push(test_step_rc);
+            } else if let Ok(test_step_spec) = from_value::<TestStepSpec>(step) {
+                steps.push(Arc::new(TestStep::from_spec(test_step_spec)));
             }
         }
 
         TestStepGroup {
-            id,
+            id: id.to_owned(),
             steps,
             run_once: once,
             outputs: spec.output,
@@ -63,11 +56,11 @@ impl TestStepGroup {
     }
 
     pub fn runs_once(&self) -> bool {
-        return self.run_once;
+        self.run_once
     }
 
     pub fn get_group_id(&self) -> String {
-        return format!("{}:{}", self.path.display(), self.id);
+        format!("{}:{}", self.path.display(), self.id)
     }
 
     pub async fn run_internal(
@@ -76,12 +69,12 @@ impl TestStepGroup {
         prior_steps: &HashMap<String, TestStepResult>,
     ) -> Result<TestStepResult> {
         // Run Steps
-        let mut local_steps: HashMap<String, TestStepResult> = HashMap::new();
+        let mut local_steps: HashMap<&str, TestStepResult> = HashMap::new();
         for step in self.steps.iter() {
             match step.run(config, prior_steps).await {
                 Ok(result) => {
                     if let Some(id) = step.get_id() {
-                        local_steps.insert(id.clone(), result);
+                        local_steps.insert(id.as_str(), result);
                     }
                 }
                 Err(e) => {
@@ -92,31 +85,28 @@ impl TestStepGroup {
         }
 
         // Process Outputs
-        let mut outputs: HashMap<String, serde_json::Value> = HashMap::new();
+        let mut outputs: HashMap<&str, serde_json::Value> = HashMap::new();
 
         for (output_key, output_value) in self.outputs.iter() {
             if output_value.starts_with('$') {
-                let mut output_str_copy = output_value.clone();
-                output_str_copy.remove(0);
+                let rest = &output_value[1..];
+                let mut output_sections: Vec<&str> = rest.split('.').collect();
 
-                let mut output_sections: Vec<String> =
-                    output_str_copy.split('.').map(|v| v.to_string()).collect();
-
-                let step_id = match output_sections.get(0) {
-                    Some(v) => v.clone(),
+                let step_id = match output_sections.first() {
+                    Some(v) => *v,
                     None => return Err(anyhow!(
                         "output '{}': '{}' is not a valid step reference — expected '$<step-id>.<field>'",
                         output_key, output_value
                     )),
                 };
 
-                if let Some(step) = local_steps.get(&step_id) {
+                if let Some(step) = local_steps.get(step_id) {
                     output_sections.remove(0);
                     let field_key = output_sections.join(".");
-                    if let Ok(val) = step.get_field(field_key.clone()) {
+                    if let Ok(val) = step.get_field(&field_key) {
                         if let Some(yaml_val) = val {
                             if let Ok(v) = serde_json::from_value(yaml_val) {
-                                outputs.insert(output_key.clone(), v);
+                                outputs.insert(output_key.as_str(), v);
                                 continue;
                             }
                         }
@@ -135,7 +125,7 @@ impl TestStepGroup {
         }
 
         let result = TestStepResult::make_success(
-            Some(self.id.clone()),
+            Some(self.id.as_str()),
             serde_yaml::from_value(Value::Null)?,
             serde_yaml::from_value(Value::Null)?,
             serde_json::to_value(outputs)?,
@@ -161,40 +151,38 @@ pub struct ConfigData {
 }
 
 impl ConfigData {
-    pub fn get_step_group(&self, step_group_key: String) -> Result<TestStepGroup> {
-        if let Some(step_group) = self.step_sets.as_ref().and_then(|v| v.get(&step_group_key)) {
+    pub fn get_step_group(&self, step_group_key: &str) -> Result<TestStepGroup> {
+        if let Some(step_group) = self.step_sets.as_ref().and_then(|v| v.get(step_group_key)) {
             return Ok(step_group.clone());
         }
 
         if let Some(parent) = &self.parent {
-            let r = parent.read();
-            let u = r.unwrap();
-            let step_group = u.get_step_group(step_group_key)?;
-            return Ok(step_group.clone());
+            return parent.read().unwrap().get_step_group(step_group_key);
         }
         Err(anyhow!("step-set '{}' not found", step_group_key))
     }
 
-    pub fn get_string_value(&self, key: String) -> Result<String> {
-        let string_keys: Vec<String> = key.split('.').map(|v| v.to_string()).collect();
-        if string_keys[0] == "urls" {
-            if let Some(val) = self.urls.get(&string_keys[1]) {
-                if val.starts_with('$') {
-                    let mut new_val = val.clone();
-                    new_val.remove(0);
-                    return self.get_string_value(new_val);
-                }
-                return Ok(val.clone());
+    pub fn get_string_value(&self, key: &str) -> Result<String> {
+        let mut parts = key.splitn(2, '.');
+        let ns = parts.next().unwrap_or("");
+        let field = parts.next().unwrap_or("");
+
+        if ns == "urls" {
+            if let Some(val) = self.urls.get(field) {
+                return if val.starts_with('$') {
+                    self.get_string_value(&val[1..])
+                } else {
+                    Ok(val.clone())
+                };
             }
         }
-        if string_keys[0] == "vars" {
-            if let Some(var) = self.vars.get(&string_keys[1]) {
-                if var.starts_with('$') {
-                    let mut new_val = var.clone();
-                    new_val.remove(0);
-                    return self.get_string_value(new_val);
-                }
-                return Ok(var.clone());
+        if ns == "vars" {
+            if let Some(var) = self.vars.get(field) {
+                return if var.starts_with('$') {
+                    self.get_string_value(&var[1..])
+                } else {
+                    Ok(var.clone())
+                };
             }
         }
         if let Some(par) = &self.parent {
@@ -212,33 +200,33 @@ impl ConfigData {
     ) -> Result<HashMap<String, String>, Error> {
         let mut output: HashMap<String, String> = HashMap::new();
 
-        for (key, value) in spec_vars.iter() {
+        for (key, value) in spec_vars {
             if let Some(string_val) = value.as_str() {
-                output.insert(String::from(key), String::from(string_val));
+                output.insert(key, string_val.to_owned());
             } else if let Some(mapping_val) = value.as_mapping() {
-                let mut has_value = false;
-                if let Some(env_var_name_str) = mapping_val.get("env").and_then(|v| v.as_str()) {
-                    if let Ok(env_var_str) = std::env::var(env_var_name_str) {
-                        output.insert(String::from(key), env_var_str);
-                        has_value = true;
+                // Resolve env var first, fall back to default. Use or() so we
+                // can move key into exactly one of insert or the error message.
+                let env_val = mapping_val
+                    .get("env")
+                    .and_then(|v| v.as_str())
+                    .and_then(|env_name| std::env::var(env_name).ok());
+
+                let default_val = mapping_val
+                    .get("default")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_owned());
+
+                match env_val.or(default_val) {
+                    Some(val) => {
+                        output.insert(key, val);
                     }
-                }
-
-                if !has_value
-                    && let Some(default_str) = mapping_val.get("default").and_then(|v| v.as_str())
-                {
-                    output.insert(String::from(key), String::from(default_str));
-                    has_value = true;
-                }
-
-                if !has_value {
-                    let error_message = format!(
-                        "\
-                        Variable ({}) must be set to either a string value, \
-                        or a mapping with one or more of 'default' and 'env' values.",
-                        key
-                    );
-                    return Err(anyhow!(error_message));
+                    None => {
+                        return Err(anyhow!(
+                            "Variable ({}) must be set to either a string value, \
+                            or a mapping with one or more of 'default' and 'env' values.",
+                            key
+                        ));
+                    }
                 }
             }
         }
@@ -252,7 +240,10 @@ impl ConfigData {
             step_sets = Some(
                 step_set_specs
                     .into_iter()
-                    .map(|(k, v)| (k.clone(), TestStepGroup::from_spec(k.clone(), v, path)))
+                    .map(|(k, v)| {
+                        let group = TestStepGroup::from_spec(&k, v, path);
+                        (k, group)
+                    })
                     .collect(),
             )
         }
@@ -261,25 +252,13 @@ impl ConfigData {
         let mut urls: HashMap<String, String> = HashMap::new();
 
         if let Some(spec_vars) = spec.vars {
-            match ConfigData::create_variables(spec_vars) {
-                Ok(vars_result) => {
-                    vars = vars_result;
-                }
-                Err(e) => {
-                    return Err(anyhow!("Error Decoding Config {}:\n{}", path.display(), e));
-                }
-            }
+            vars = ConfigData::create_variables(spec_vars)
+                .map_err(|e| anyhow!("Error Decoding Config {}:\n{}", path.display(), e))?;
         }
 
         if let Some(spec_urls) = spec.urls {
-            match ConfigData::create_variables(spec_urls) {
-                Ok(urls_result) => {
-                    urls = urls_result;
-                }
-                Err(e) => {
-                    return Err(anyhow!("Error Decoding Config {}:\n{}", path.display(), e));
-                }
-            }
+            urls = ConfigData::create_variables(spec_urls)
+                .map_err(|e| anyhow!("Error Decoding Config {}:\n{}", path.display(), e))?;
         }
 
         Ok(ConfigData {
@@ -291,31 +270,20 @@ impl ConfigData {
         })
     }
 
-    pub fn spec_from_val(value: &Value) -> anyhow::Result<ConfigSpec> {
-        match from_value::<ConfigSpec>(value.clone()) {
-            Ok(config_spec) => Ok(config_spec),
-            Err(e) => Err(anyhow!("{}", e)),
-        }
+    pub fn spec_from_val(value: Value) -> anyhow::Result<ConfigSpec> {
+        from_value::<ConfigSpec>(value).map_err(|e| anyhow!("{}", e))
     }
 
     pub fn spec_from_file(path: &PathBuf) -> Result<ConfigSpec> {
-        if let Ok(file) = File::open(path) {
-            let reader = BufReader::new(file);
-            let config_file_result = serde_yaml::from_reader::<_, Value>(reader);
-            match config_file_result {
-                Ok(config_file) => {
-                    return ConfigData::spec_from_val(&config_file);
-                }
-                Err(e) => {
-                    return Err(anyhow!(e));
-                }
-            }
-        } else {
-            return Err(anyhow!("Error Reading Config File: {}", path.display()));
-        }
+        let file = File::open(path)
+            .map_err(|_| anyhow!("Error Reading Config File: {}", path.display()))?;
+        let reader = BufReader::new(file);
+        serde_yaml::from_reader::<_, Value>(reader)
+            .map_err(|e| anyhow!(e))
+            .and_then(ConfigData::spec_from_val)
     }
 
-    pub fn from_val(value: &Value, path: &PathBuf) -> Result<ConfigData> {
+    pub fn from_val(value: Value, path: &PathBuf) -> Result<ConfigData> {
         ConfigData::spec_from_val(value).and_then(|v| ConfigData::from_spec(path, v))
     }
 
@@ -345,7 +313,7 @@ impl RunnableTestStep for TestStepGroupReference {
         let cfg = config
             .as_ref()
             .ok_or_else(|| anyhow!("No config available to resolve step group '{}'", self.id))?;
-        let step_group = cfg.read().unwrap().get_step_group(self.id.clone())?;
+        let step_group = cfg.read().unwrap().get_step_group(&self.id)?;
         step_group.run(config, prior_steps).await
     }
 }

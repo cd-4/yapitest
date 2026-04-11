@@ -113,6 +113,7 @@ test-create-and-get-post:
           body: "Some message"
           id: +int
           user_id: +int
+          meta: +dict
 
 
 test-create-and-get-post-fail:

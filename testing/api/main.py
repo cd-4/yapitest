@@ -45,6 +45,7 @@ class SampleUser:
 
     def full_json(self):
         reg_json = self.to_json()
+        reg_json["score"] = 4.2
         reg_json["posts"] = [post.to_json() for post in self.posts]
         return reg_json
 
@@ -69,6 +70,7 @@ class SamplePost:
             "title": self.title,
             "body": self.content,
             "user_id": self.user_id,
+            "meta": {"pinned": False},
         }
 
 
