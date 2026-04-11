@@ -34,11 +34,11 @@ pub struct TestSpec {
     groups: Option<Vec<String>>,
 }
 
-pub fn print_test_results(test_results: &Vec<TestResult>, duration_secs: f32) {
+pub fn print_test_results(test_results: &[TestResult], duration_secs: f32) {
     let mut passes: Vec<&TestResult> = vec![];
     let mut fails: Vec<&TestResult> = vec![];
 
-    for test_result in test_results.iter() {
+    for test_result in test_results {
         if test_result.passed() {
             passes.push(test_result);
         } else {
@@ -74,7 +74,7 @@ pub fn print_test_results(test_results: &Vec<TestResult>, duration_secs: f32) {
     if !fails.is_empty() {
         println!();
         println!("{}", "FAILURES".bold());
-        for failure in fails.iter() {
+        for failure in &fails {
             println!();
             println!("  {} {}", "✗".red(), failure.test_name.bold());
             println!("    File:  {}", failure.test_path.display());
@@ -98,17 +98,10 @@ impl TestResult {
         &self.test_name
     }
 
-    pub fn get_failing_step(&self) -> &Option<TestStepResult> {
-        &self.failing_step
-    }
-
-    pub fn get_failure_message(&self) -> Option<String> {
-        if let Some(step) = &self.failing_step {
-            if let Some(msg) = &step.failure_message {
-                return Some(msg.clone());
-            }
-        }
-        return None;
+    pub fn get_failure_message(&self) -> Option<&str> {
+        self.failing_step
+            .as_ref()
+            .and_then(|s| s.failure_message.as_deref())
     }
 
     pub fn passed(&self) -> bool {
@@ -150,7 +143,7 @@ impl TestResult {
     }
 }
 
-fn is_test_name(key: String) -> bool {
+fn is_test_name(key: &str) -> bool {
     let lower_name = key.to_lowercase();
     lower_name.starts_with("test") || lower_name.ends_with("test")
 }
@@ -200,15 +193,15 @@ impl Test {
         for step in spec.steps.into_iter() {
             match from_value::<TestStepSpec>(step.clone()) {
                 Ok(test_step_spec) => {
-                    let step = TestStep::from_spec(test_step_spec);
-                    test_steps.push(Arc::new(RwLock::new(step)));
+                    test_steps.push(Arc::new(RwLock::new(TestStep::from_spec(test_step_spec))));
                 }
                 Err(_) => {
                     // Possible that it's using a test step defined in the config
-                    match step.clone().as_str() {
+                    match step.as_str() {
                         Some(step_name) => {
-                            let step = TestStepGroupReference::from_id(step_name.to_string());
-                            test_steps.push(Arc::new(RwLock::new(step)));
+                            test_steps.push(Arc::new(RwLock::new(
+                                TestStepGroupReference::from_id(step_name.to_owned()),
+                            )));
                         }
                         None => return Err(anyhow!("Error Decoding Step in test {}", name)),
                     }
@@ -237,21 +230,20 @@ impl Test {
             match test_file_result {
                 Ok(test_file) => {
                     if let Some(config_value) = test_file.get("config") {
-                        config = Some(ConfigData::from_val(&config_value, path)?);
+                        config = Some(ConfigData::from_val(config_value, path)?);
                     }
 
                     if let Some(mapping) = test_file.as_mapping() {
                         for key in mapping.keys().filter_map(|v| v.as_str()) {
-                            if is_test_name(key.to_string()) {
+                            if is_test_name(key) {
                                 if let Some(test_value) = mapping.get(key) {
                                     match from_value::<TestSpec>(test_value.clone()) {
                                         Ok(test_spec) => {
                                             let test = Test::from_spec(
                                                 path.clone(),
-                                                key.to_string(),
+                                                key.to_owned(),
                                                 test_spec,
                                             )?;
-
                                             tests.push(test);
                                         }
                                         Err(e) => {
@@ -279,19 +271,20 @@ impl Test {
     pub async fn run(&self) -> TestResult {
         let mut prior_steps: HashMap<String, TestStepResult> = HashMap::new();
 
-        if let (Some(setup_id), Some(cfg)) = (self.setup.clone(), &self.config) {
-            match cfg.read().unwrap().get_step_group(setup_id.clone()) {
+        // Use as_deref() to get Option<&str> from Option<String>, avoiding a clone.
+        if let (Some(setup_id), Some(cfg)) = (self.setup.as_deref(), &self.config) {
+            match cfg.read().unwrap().get_step_group(setup_id) {
                 Ok(setup) => match setup.run(&self.config, &prior_steps).await {
                     Ok(result) => {
-                        prior_steps.insert("setup".to_string(), result);
+                        prior_steps.insert("setup".to_owned(), result);
                     }
                     Err(e) => {
                         return TestResult::make_failure_from_error(
                             &self.name,
                             &self.path,
-                            Some("setup".to_string()),
+                            Some("setup".to_owned()),
                             TestStepFailureReason::Miscellaneous,
-                            "setup failed".to_string(),
+                            "setup failed".to_owned(),
                             e,
                         );
                     }
@@ -300,9 +293,9 @@ impl Test {
                     return TestResult::make_failure_from_error(
                         &self.name,
                         &self.path,
-                        Some("setup".to_string()),
+                        Some("setup".to_owned()),
                         TestStepFailureReason::SharedStepNotFoundError,
-                        "setup step-set not found".to_string(),
+                        "setup step-set not found".to_owned(),
                         e,
                     );
                 }
@@ -311,48 +304,41 @@ impl Test {
 
         for step in self.steps.iter() {
             let real_step = step.read().unwrap();
-            // println!("Running Step");
             match real_step.run(&self.config, &prior_steps).await {
                 Ok(result) => {
                     if result.status != TestStepFailureReason::NoFailure {
                         return TestResult::make_failure(&self.name, &self.path, result);
-                    } else {
-                        if let Some(id) = real_step.get_id() {
-                            prior_steps.insert(id.clone(), result);
-                        }
+                    } else if let Some(id) = real_step.get_id() {
+                        prior_steps.insert(id.clone(), result);
                     }
                 }
                 Err(e) => {
-                    let mut step_id: Option<String> = None;
-                    if let Some(actual_step_id) = real_step.get_id() {
-                        step_id = Some(actual_step_id.clone());
-                    }
+                    let step_id = real_step.get_id().cloned();
                     return TestResult::make_failure_from_error(
                         &self.name,
                         &self.path,
                         step_id,
                         TestStepFailureReason::Miscellaneous,
-                        "step failed".to_string(),
+                        "step failed".to_owned(),
                         e,
                     );
                 }
             }
         }
 
-        if let (Some(teardown_id), Some(cfg)) = (self.teardown.clone(), &self.config) {
-            //println!("Running Setup");
-            match cfg.read().unwrap().get_step_group(teardown_id.clone()) {
+        if let (Some(teardown_id), Some(cfg)) = (self.teardown.as_deref(), &self.config) {
+            match cfg.read().unwrap().get_step_group(teardown_id) {
                 Ok(teardown) => match teardown.run(&self.config, &prior_steps).await {
                     Ok(result) => {
-                        prior_steps.insert("teardown".to_string(), result);
+                        prior_steps.insert("teardown".to_owned(), result);
                     }
                     Err(e) => {
                         return TestResult::make_failure_from_error(
                             &self.name,
                             &self.path,
-                            Some("teardown".to_string()),
+                            Some("teardown".to_owned()),
                             TestStepFailureReason::Miscellaneous,
-                            "teardown failed".to_string(),
+                            "teardown failed".to_owned(),
                             e,
                         );
                     }
@@ -361,14 +347,15 @@ impl Test {
                     return TestResult::make_failure_from_error(
                         &self.name,
                         &self.path,
-                        Some("teardown".to_string()),
+                        Some("teardown".to_owned()),
                         TestStepFailureReason::SharedStepNotFoundError,
-                        "teardown step-set not found".to_string(),
+                        "teardown step-set not found".to_owned(),
                         e,
                     );
                 }
             }
         }
+
         TestResult {
             test_name: self.name.clone(),
             test_path: self.path.clone(),
