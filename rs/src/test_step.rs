@@ -404,11 +404,7 @@ pub fn compare_array_objects(
         ));
     }
 
-    for (index, (observed, expected)) in observed_object
-        .iter()
-        .zip(expected_object.iter())
-        .enumerate()
-    {
+    for (index, (observed, expected)) in observed_object.iter().zip(expected_object.iter()).enumerate() {
         let new_keys = format!("{}.[{}]", keys, index);
         compare_data_inner(observed, expected, full, &new_keys, config, prior_steps)?;
     }
