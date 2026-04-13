@@ -93,6 +93,7 @@ pub struct TestResult {
     /// All steps that ran (including the failing one if any).
     pub steps: Vec<TestStepResult>,
     success: bool,
+    pub duration_ms: u64,
 }
 
 impl TestResult {
@@ -115,6 +116,10 @@ impl TestResult {
         self.success
     }
 
+    pub fn file_path(&self) -> Option<&PathBuf> {
+        Some(&self.test_path)
+    }
+
     fn make_failure(
         test_name: &String,
         test_path: &PathBuf,
@@ -125,6 +130,7 @@ impl TestResult {
             test_path: test_path.to_path_buf(),
             steps,
             success: false,
+            duration_ms: 0,
         }
     }
 }
@@ -362,6 +368,7 @@ impl Test {
             test_path: self.path.clone(),
             steps: completed_steps,
             success: true,
+            duration_ms: 0,
         }
     }
 }
