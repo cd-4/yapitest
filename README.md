@@ -50,7 +50,7 @@ test-create-and-get-post:
 
 1. Firstly, the name of the test (`test-create-and-get-post`) gives some indication of what the test is doing.
 
-2. There is a `setup` which is something that runs before the test. This one, `create-user` is reusable step that creates a user. It is defined in a config file. Similarly, you can specify a `cleanup` which is run after the other steps run.
+2. There is a `setup` which is something that runs before the test. This one, `create-user` is reusable step that creates a user. It is defined in a config file. Similarly, you can specify a `teardown` which is run after the other steps run.
 
 3. Then we have the `steps` section, which includes the actual steps of the tests.
 
@@ -96,7 +96,7 @@ yapitest ./tests -g auth -g admin
 
 **Parallelism**
 
-By default, tests run on a single thread. Use `-t` to run tests across multiple threads:
+By default, yapitest will try to determine an appropriate level of parallelism. Use `-t` to run tests across multiple threads:
 
 ```bash
 yapitest ./tests -t 4
