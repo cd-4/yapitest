@@ -213,7 +213,12 @@ async fn run_tests_thread(tests: &[Test]) -> Vec<TestResult> {
 }
 
 async fn run_tests(tests: &[Test], threads: Option<u64>) -> Vec<TestResult> {
-    let num_threads = threads.unwrap_or(1);
+    let num_threads = threads.unwrap_or_else(|| {
+        let available = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        ((available * 3 / 4) as u64).max(1)
+    });
 
     if num_threads == 1 {
         return run_tests_thread(tests).await;
