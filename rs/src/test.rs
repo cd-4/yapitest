@@ -10,7 +10,8 @@ use std::sync::{Arc, RwLock};
 
 use crate::config::{ConfigData, ConfigSpec, TestStepGroupReference};
 use crate::test_step::{
-    RunnableTestStep, TestStep, TestStepFailureReason, TestStepResult, TestStepSpec,
+    AssertionResult, RunnableTestStep, TestStep, TestStepFailureReason, TestStepResult,
+    TestStepSpec,
 };
 
 #[derive(Clone)]
@@ -34,23 +35,22 @@ pub struct TestSpec {
     groups: Option<Vec<String>>,
 }
 
-pub fn print_test_results(test_results: &[TestResult], duration_secs: f32) {
-    let mut passes: Vec<&TestResult> = vec![];
-    let mut fails: Vec<&TestResult> = vec![];
+pub fn print_test_results(test_results: &[TestResult], duration_secs: f32, verbosity: u8) {
+    if verbosity == 0 {
+        return;
+    }
 
-    for test_result in test_results {
-        if test_result.passed() {
-            passes.push(test_result);
-        } else {
-            fails.push(test_result);
-        }
+    let mut num_passes = 0usize;
+    let mut fails: Vec<&TestResult> = vec![];
+    for r in test_results {
+        if r.passed() { num_passes += 1; } else { fails.push(r); }
     }
 
     let total = test_results.len();
-    let num_passes = passes.len();
     let num_failures = fails.len();
     let divider = "─".repeat(40);
 
+    println!();
     println!("{}", divider.dimmed());
 
     if num_failures == 0 {
@@ -71,7 +71,8 @@ pub fn print_test_results(test_results: &[TestResult], duration_secs: f32) {
 
     println!("{}", divider.dimmed());
 
-    if !fails.is_empty() {
+    // Verbosity 2+ shows the FAILURES detail block.
+    if verbosity >= 2 && !fails.is_empty() {
         println!();
         println!("{}", "FAILURES".bold());
         for failure in &fails {
@@ -89,8 +90,10 @@ pub fn print_test_results(test_results: &[TestResult], duration_secs: f32) {
 pub struct TestResult {
     test_name: String,
     test_path: PathBuf,
-    failing_step: Option<TestStepResult>,
+    /// All steps that ran (including the failing one if any).
+    pub steps: Vec<TestStepResult>,
     success: bool,
+    pub duration_ms: u64,
 }
 
 impl TestResult {
@@ -99,46 +102,35 @@ impl TestResult {
     }
 
     pub fn get_failure_message(&self) -> Option<&str> {
-        self.failing_step
-            .as_ref()
-            .and_then(|s| s.failure_message.as_deref())
+        if self.success {
+            return None;
+        }
+        self.steps.last().and_then(|s| s.failure_message.as_deref())
+    }
+
+    pub fn assertions(&self) -> impl Iterator<Item = &AssertionResult> {
+        self.steps.iter().flat_map(|s| s.assertion_results.iter())
     }
 
     pub fn passed(&self) -> bool {
         self.success
     }
 
-    pub fn make_failure_from_error(
-        test_name: &String,
-        test_path: &PathBuf,
-        step_id: Option<&str>,
-        failure_reason: TestStepFailureReason,
-        error_prefix: String,
-        error: Error,
-    ) -> TestResult {
-        let step_result = TestStepResult::make_failure(
-            step_id,
-            failure_reason,
-            format!("{}: {}", error_prefix, error),
-        );
-        TestResult {
-            test_name: test_name.to_string(),
-            test_path: test_path.to_path_buf(),
-            failing_step: Some(step_result),
-            success: false,
-        }
+    pub fn file_path(&self) -> Option<&PathBuf> {
+        Some(&self.test_path)
     }
 
-    pub fn make_failure(
+    fn make_failure(
         test_name: &String,
         test_path: &PathBuf,
-        failure: TestStepResult,
+        steps: Vec<TestStepResult>,
     ) -> TestResult {
         TestResult {
             test_name: test_name.to_string(),
             test_path: test_path.to_path_buf(),
-            failing_step: Some(failure),
+            steps,
             success: false,
+            duration_ms: 0,
         }
     }
 }
@@ -294,97 +286,89 @@ impl Test {
 
     pub async fn run(&self) -> TestResult {
         let mut prior_steps: HashMap<String, TestStepResult> = HashMap::new();
+        let mut completed_steps: Vec<TestStepResult> = Vec::new();
 
-        // Use as_deref() to get Option<&str> from Option<String>, avoiding a clone.
+        macro_rules! fail {
+            ($step_result:expr) => {{
+                completed_steps.push($step_result);
+                return TestResult::make_failure(&self.name, &self.path, completed_steps);
+            }};
+        }
+
+        // Setup
         if let (Some(setup_id), Some(cfg)) = (self.setup.as_deref(), &self.config) {
             match cfg.read().unwrap().get_step_group(setup_id) {
                 Ok(setup) => match setup.run(&self.config, &prior_steps).await {
                     Ok(result) => {
-                        prior_steps.insert("setup".to_owned(), result);
+                        prior_steps.insert("setup".to_owned(), result.clone());
+                        completed_steps.push(result);
                     }
-                    Err(e) => {
-                        return TestResult::make_failure_from_error(
-                            &self.name,
-                            &self.path,
-                            Some("setup"),
-                            TestStepFailureReason::Miscellaneous,
-                            "setup failed".to_owned(),
-                            e,
-                        );
-                    }
-                },
-                Err(e) => {
-                    return TestResult::make_failure_from_error(
-                        &self.name,
-                        &self.path,
+                    Err(e) => fail!(TestStepResult::make_failure(
                         Some("setup"),
-                        TestStepFailureReason::SharedStepNotFoundError,
-                        "setup step-set not found".to_owned(),
-                        e,
-                    );
-                }
+                        TestStepFailureReason::Miscellaneous,
+                        format!("setup failed: {}", e),
+                    )),
+                },
+                Err(e) => fail!(TestStepResult::make_failure(
+                    Some("setup"),
+                    TestStepFailureReason::SharedStepNotFoundError,
+                    format!("setup step-set not found: {}", e),
+                )),
             }
         }
 
+        // Steps
         for step in self.steps.iter() {
             let real_step = step.read().unwrap();
             match real_step.run(&self.config, &prior_steps).await {
                 Ok(result) => {
                     if result.status != TestStepFailureReason::NoFailure {
-                        return TestResult::make_failure(&self.name, &self.path, result);
-                    } else if let Some(id) = real_step.get_id() {
-                        prior_steps.insert(id.clone(), result);
+                        fail!(result);
                     }
+                    if let Some(id) = real_step.get_id() {
+                        prior_steps.insert(id.clone(), result.clone());
+                    }
+                    completed_steps.push(result);
                 }
                 Err(e) => {
                     let step_id = real_step.get_id().map(String::as_str);
-                    return TestResult::make_failure_from_error(
-                        &self.name,
-                        &self.path,
+                    fail!(TestStepResult::make_failure(
                         step_id,
                         TestStepFailureReason::Miscellaneous,
-                        "step failed".to_owned(),
-                        e,
-                    );
+                        format!("step failed: {}", e),
+                    ));
                 }
             }
         }
 
+        // Teardown
         if let (Some(teardown_id), Some(cfg)) = (self.teardown.as_deref(), &self.config) {
             match cfg.read().unwrap().get_step_group(teardown_id) {
                 Ok(teardown) => match teardown.run(&self.config, &prior_steps).await {
                     Ok(result) => {
-                        prior_steps.insert("teardown".to_owned(), result);
+                        prior_steps.insert("teardown".to_owned(), result.clone());
+                        completed_steps.push(result);
                     }
-                    Err(e) => {
-                        return TestResult::make_failure_from_error(
-                            &self.name,
-                            &self.path,
-                            Some("teardown"),
-                            TestStepFailureReason::Miscellaneous,
-                            "teardown failed".to_owned(),
-                            e,
-                        );
-                    }
-                },
-                Err(e) => {
-                    return TestResult::make_failure_from_error(
-                        &self.name,
-                        &self.path,
+                    Err(e) => fail!(TestStepResult::make_failure(
                         Some("teardown"),
-                        TestStepFailureReason::SharedStepNotFoundError,
-                        "teardown step-set not found".to_owned(),
-                        e,
-                    );
-                }
+                        TestStepFailureReason::Miscellaneous,
+                        format!("teardown failed: {}", e),
+                    )),
+                },
+                Err(e) => fail!(TestStepResult::make_failure(
+                    Some("teardown"),
+                    TestStepFailureReason::SharedStepNotFoundError,
+                    format!("teardown step-set not found: {}", e),
+                )),
             }
         }
 
         TestResult {
             test_name: self.name.clone(),
             test_path: self.path.clone(),
-            failing_step: None,
+            steps: completed_steps,
             success: true,
+            duration_ms: 0,
         }
     }
 }

@@ -11,6 +11,13 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 
+#[derive(Debug, Clone)]
+pub struct AssertionResult {
+    pub name: String,
+    pub passed: bool,
+    pub message: Option<String>,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum TestStepFailureReason {
     NoFailure,
@@ -62,6 +69,7 @@ pub struct TestStepResult {
     pub output_data: Option<Value>,
     pub status: TestStepFailureReason,
     pub failure_message: Option<String>,
+    pub assertion_results: Vec<AssertionResult>,
 }
 
 pub fn get_variable(
@@ -307,81 +315,101 @@ pub fn compare_data_objects(
     keys: &str,
     config: &Option<Arc<RwLock<ConfigData>>>,
     prior_steps: &HashMap<String, TestStepResult>,
-) -> Result<()> {
+    assertions: &mut Vec<AssertionResult>,
+) -> bool {
+    let mut all_passed = true;
+
     // Check every expected key is present and matches in the observed response.
     // Iterating expected (not observed) ensures missing fields are caught.
-    for key in expected_object.keys() {
-        let expected = expected_object.get(key).unwrap();
-
+    for (key, expected) in expected_object {
         // `len(field)` keys are size assertions handled in the observed pass below.
         if key.starts_with("len(") && key.ends_with(')') {
             continue;
         }
 
+        let field_path = if keys.is_empty() {
+            key.clone()
+        } else {
+            format!("{}.{}", keys.trim_start_matches('.'), key)
+        };
+
         let observed = match observed_object.get(key) {
             Some(v) => v,
             None => {
-                let path = if keys.is_empty() {
-                    key.as_str()
-                } else {
-                    &format!("{}.{}", keys.trim_start_matches('.'), key)
-                };
-                return Err(anyhow!("missing field '{}' in response", path));
+                assertions.push(AssertionResult {
+                    name: field_path.clone(),
+                    passed: false,
+                    message: Some(format!("missing field '{}' in response", field_path)),
+                });
+                all_passed = false;
+                continue;
             }
         };
 
         let new_keys = format!("{}.{}", keys, key);
-        compare_data_inner(observed, expected, full, &new_keys, config, prior_steps)?;
+        if !compare_data_inner(observed, expected, full, &new_keys, config, prior_steps, assertions) {
+            all_passed = false;
+        }
     }
 
     // Walk observed keys for `len(field)` size checks and the `full` mode check
     // (no unexpected extra fields in the response).
-    for key in observed_object.keys() {
-        let observed = observed_object.get(key).unwrap();
-
+    for (key, observed) in observed_object {
         let size_key = format!("len({})", key);
         if let Some(expected_size) = expected_object.get(&size_key) {
-            let cmp_str = expected_size.as_str().unwrap();
+            let cmp_str = expected_size.as_str().unwrap_or("");
             let field_path = if keys.is_empty() {
-                key.as_str()
+                key.clone()
             } else {
-                &format!("{}.{}", keys.trim_start_matches('.'), key)
+                format!("{}.{}", keys.trim_start_matches('.'), key)
             };
+            let assertion_name = format!("len({}) {}", field_path, cmp_str);
             match get_value_length(observed) {
                 Ok(actual_len) => match check_size(observed, cmp_str) {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        return Err(anyhow!(
-                            "len({}) expected {}, got {}",
-                            field_path,
-                            cmp_str,
-                            actual_len
-                        ));
+                    Ok(true) => {
+                        assertions.push(AssertionResult { name: assertion_name, passed: true, message: None });
                     }
-                    Err(_) => {
-                        return Err(anyhow!(
-                            "invalid size comparison '{}' on field '{}'",
-                            cmp_str,
-                            field_path
-                        ));
+                    Ok(false) => {
+                        assertions.push(AssertionResult {
+                            name: assertion_name,
+                            passed: false,
+                            message: Some(format!("len({}) expected {}, got {}", field_path, cmp_str, actual_len)),
+                        });
+                        all_passed = false;
+                    }
+                    Err(e) => {
+                        assertions.push(AssertionResult {
+                            name: assertion_name,
+                            passed: false,
+                            message: Some(format!("invalid size comparison '{}' on field '{}': {}", cmp_str, field_path, e)),
+                        });
+                        all_passed = false;
                     }
                 },
-                Err(e) => return Err(e),
+                Err(e) => {
+                    assertions.push(AssertionResult { name: assertion_name, passed: false, message: Some(e.to_string()) });
+                    all_passed = false;
+                }
             }
         } else if full && !expected_object.contains_key(key) {
             let field_path = if keys.is_empty() {
-                key.as_str()
+                key.clone()
             } else {
-                &format!("{}.{}", keys.trim_start_matches('.'), key)
+                format!("{}.{}", keys.trim_start_matches('.'), key)
             };
-            return Err(anyhow!(
-                "unexpected field '{}' in response — add it to the 'body' assertion or remove 'full: true'",
-                field_path
-            ));
+            assertions.push(AssertionResult {
+                name: field_path.clone(),
+                passed: false,
+                message: Some(format!(
+                    "unexpected field '{}' in response — add it to the 'body' assertion or remove 'full: true'",
+                    field_path
+                )),
+            });
+            all_passed = false;
         }
     }
 
-    Ok(())
+    all_passed
 }
 
 pub fn compare_array_objects(
@@ -391,25 +419,28 @@ pub fn compare_array_objects(
     keys: &str,
     config: &Option<Arc<RwLock<ConfigData>>>,
     prior_steps: &HashMap<String, TestStepResult>,
-) -> Result<()> {
+    assertions: &mut Vec<AssertionResult>,
+) -> bool {
+    let path = keys.trim_start_matches('.');
     let num_expected = expected_object.len();
     let num_observed = observed_object.len();
     if num_expected != num_observed {
-        let path = keys.trim_start_matches('.');
-        return Err(anyhow!(
-            "'{}' — expected {} item(s), got {}",
-            path,
-            num_expected,
-            num_observed
-        ));
+        assertions.push(AssertionResult {
+            name: path.to_owned(),
+            passed: false,
+            message: Some(format!("'{}' — expected {} item(s), got {}", path, num_expected, num_observed)),
+        });
+        return false;
     }
 
+    let mut all_passed = true;
     for (index, (observed, expected)) in observed_object.iter().zip(expected_object.iter()).enumerate() {
         let new_keys = format!("{}.[{}]", keys, index);
-        compare_data_inner(observed, expected, full, &new_keys, config, prior_steps)?;
+        if !compare_data_inner(observed, expected, full, &new_keys, config, prior_steps, assertions) {
+            all_passed = false;
+        }
     }
-
-    Ok(())
+    all_passed
 }
 
 fn value_type_name(v: &Value) -> &'static str {
@@ -456,7 +487,8 @@ pub fn compare_primitive_values(
     keys: &str,
     config: &Option<Arc<RwLock<ConfigData>>>,
     prior_steps: &HashMap<String, TestStepResult>,
-) -> Result<()> {
+    assertions: &mut Vec<AssertionResult>,
+) -> bool {
     let path = keys.trim_start_matches('.');
 
     if let Some(exp_str) = expected.as_str() {
@@ -473,7 +505,10 @@ pub fn compare_primitive_values(
                 }
                 _ => true,
             };
-            if !type_ok {
+            let name = format!("{} ({})", path, exp_str);
+            if type_ok {
+                assertions.push(AssertionResult { name, passed: true, message: None });
+            } else {
                 let readable_type = match exp_type {
                     "str" | "string" => "a string",
                     "float" | "flt" => "a float",
@@ -482,51 +517,62 @@ pub fn compare_primitive_values(
                     "arr" | "array" | "list" => "an array",
                     _ => "an object",
                 };
-                return Err(anyhow!(
-                    "'{}' — expected {}, got {} ({})",
-                    path,
-                    readable_type,
-                    value_type_name(observed),
-                    observed
-                ));
+                assertions.push(AssertionResult {
+                    name,
+                    passed: false,
+                    message: Some(format!(
+                        "'{}' — expected {}, got {} ({})",
+                        path, readable_type, value_type_name(observed), observed
+                    )),
+                });
             }
-            return Ok(());
+            return type_ok;
         } else if exp_str.starts_with('$') {
-            let exp_var = get_variable(exp_str, config, prior_steps)?;
-            if !value_eq(&exp_var, observed) {
-                return Err(anyhow!(
-                    "'{}' — expected {}, got {}",
-                    path,
-                    exp_var,
-                    observed
-                ));
-            } else {
-                return Ok(());
+            match get_variable(exp_str, config, prior_steps) {
+                Ok(exp_var) => {
+                    let passed = value_eq(&exp_var, observed);
+                    assertions.push(AssertionResult {
+                        name: path.to_owned(),
+                        passed,
+                        message: if passed { None } else {
+                            Some(format!("'{}' — expected {}, got {}", path, exp_var, observed))
+                        },
+                    });
+                    return passed;
+                }
+                Err(e) => {
+                    assertions.push(AssertionResult {
+                        name: path.to_owned(),
+                        passed: false,
+                        message: Some(e.to_string()),
+                    });
+                    return false;
+                }
             }
         }
     }
 
     if value_type_name(observed) != value_type_name(expected) {
-        return Err(anyhow!(
-            "'{}' — expected {} ({}), got {} ({})",
-            path,
-            value_type_name(expected),
-            expected,
-            value_type_name(observed),
-            observed,
-        ));
+        assertions.push(AssertionResult {
+            name: path.to_owned(),
+            passed: false,
+            message: Some(format!(
+                "'{}' — expected {} ({}), got {} ({})",
+                path, value_type_name(expected), expected, value_type_name(observed), observed,
+            )),
+        });
+        return false;
     }
 
-    if !value_eq(observed, expected) {
-        Err(anyhow!(
-            "'{}' — expected {}, got {}",
-            path,
-            expected,
-            observed
-        ))
-    } else {
-        Ok(())
-    }
+    let passed = value_eq(observed, expected);
+    assertions.push(AssertionResult {
+        name: path.to_owned(),
+        passed,
+        message: if passed { None } else {
+            Some(format!("'{}' — expected {}, got {}", path, expected, observed))
+        },
+    });
+    passed
 }
 
 pub fn compare_data_inner(
@@ -536,13 +582,14 @@ pub fn compare_data_inner(
     keys: &str,
     config: &Option<Arc<RwLock<ConfigData>>>,
     prior_steps: &HashMap<String, TestStepResult>,
-) -> Result<()> {
+    assertions: &mut Vec<AssertionResult>,
+) -> bool {
     if let (Some(obs_obj), Some(exp_obj)) = (observed.as_object(), expected.as_object()) {
-        compare_data_objects(obs_obj, exp_obj, full, keys, config, prior_steps)
+        compare_data_objects(obs_obj, exp_obj, full, keys, config, prior_steps, assertions)
     } else if let (Some(obs_arr), Some(exp_arr)) = (observed.as_array(), expected.as_array()) {
-        compare_array_objects(obs_arr, exp_arr, full, keys, config, prior_steps)
+        compare_array_objects(obs_arr, exp_arr, full, keys, config, prior_steps, assertions)
     } else {
-        compare_primitive_values(observed, expected, keys, config, prior_steps)
+        compare_primitive_values(observed, expected, keys, config, prior_steps, assertions)
     }
 }
 
@@ -552,8 +599,9 @@ pub fn compare_data(
     config: &Option<Arc<RwLock<ConfigData>>>,
     prior_steps: &HashMap<String, TestStepResult>,
     full: bool,
-) -> Result<()> {
-    compare_data_inner(observed, expected, full, "", config, prior_steps)
+    assertions: &mut Vec<AssertionResult>,
+) -> bool {
+    compare_data_inner(observed, expected, full, "", config, prior_steps, assertions)
 }
 
 impl TestStepResult {
@@ -569,6 +617,7 @@ impl TestStepResult {
             request_data: None,
             output_data: None,
             failure_message: Some(message),
+            assertion_results: Vec::new(),
         }
     }
 
@@ -585,6 +634,7 @@ impl TestStepResult {
             request_data: Some(request_data),
             output_data: Some(output_data),
             failure_message: None,
+            assertion_results: Vec::new(),
         }
     }
 
@@ -758,6 +808,7 @@ impl RunnableTestStep for TestStep {
 
         let headers = clean_headers(&self.header_data, config, prior_steps)?;
         let req_data = clean_request_data(&self.request_data, config, prior_steps)?;
+        let mut assertions: Vec<AssertionResult> = Vec::new();
         let mut response_data: Option<Value> = None;
 
         match client
@@ -768,18 +819,28 @@ impl RunnableTestStep for TestStep {
             .await
         {
             Ok(response) => {
+                let actual_status_code = response.status().as_u16();
+
                 if let Some(exp_status_code) = &self.expected_status_code {
-                    let actual_status_code = response.status().as_u16();
-                    if !TestStep::check_status_code(exp_status_code, actual_status_code) {
-                        let failure_message = format!(
-                            "expected status {}, got {}",
-                            exp_status_code, actual_status_code,
-                        );
-                        return Ok(TestStepResult::make_failure(
-                            self.id.as_deref(),
-                            TestStepFailureReason::StatusCodeError,
-                            failure_message,
-                        ));
+                    let passed = TestStep::check_status_code(exp_status_code, actual_status_code);
+                    assertions.push(AssertionResult {
+                        name: format!("status {}", exp_status_code),
+                        passed,
+                        message: if passed { None } else {
+                            Some(format!("expected status {}, got {}", exp_status_code, actual_status_code))
+                        },
+                    });
+                    if !passed {
+                        let msg = assertions.last().unwrap().message.clone().unwrap_or_default();
+                        return Ok(TestStepResult {
+                            step_id: self.id.clone(),
+                            status: TestStepFailureReason::StatusCodeError,
+                            failure_message: Some(msg),
+                            response_data: None,
+                            request_data: Some(req_data),
+                            output_data: None,
+                            assertion_results: assertions,
+                        });
                     }
                 }
 
@@ -788,21 +849,30 @@ impl RunnableTestStep for TestStep {
                 match serde_json::from_str::<Value>(&res_text) {
                     Ok(actual_response) => {
                         if let Some(expected_response) = &self.expected_response_data {
-                            if let Err(e) = compare_data(
+                            let all_passed = compare_data(
                                 &actual_response,
                                 expected_response,
                                 config,
                                 prior_steps,
                                 !self.allow_missing_fields,
-                            ) {
-                                return Ok(TestStepResult::make_failure(
-                                    self.id.as_deref(),
-                                    TestStepFailureReason::ResponseError,
-                                    format!("{}", e),
-                                ));
+                                &mut assertions,
+                            );
+                            if !all_passed {
+                                let msg = assertions.iter()
+                                    .find(|a| !a.passed)
+                                    .and_then(|a| a.message.clone())
+                                    .unwrap_or_default();
+                                return Ok(TestStepResult {
+                                    step_id: self.id.clone(),
+                                    status: TestStepFailureReason::ResponseError,
+                                    failure_message: Some(msg),
+                                    response_data: Some(actual_response),
+                                    request_data: Some(req_data),
+                                    output_data: None,
+                                    assertion_results: assertions,
+                                });
                             }
                         }
-                        // Move actual_response rather than cloning it.
                         response_data = Some(actual_response);
                     }
                     Err(e) => {
@@ -828,6 +898,7 @@ impl RunnableTestStep for TestStep {
             request_data: Some(req_data),
             response_data,
             output_data: None,
+            assertion_results: assertions,
         })
     }
 }
