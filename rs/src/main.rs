@@ -65,6 +65,10 @@ struct Args {
     // Number of threads
     #[arg(short = 't')]
     threads: Option<u64>,
+
+    // Output verbosity: 0=silent, 1=names only, 2=default, 3=assertions
+    #[arg(short = 'v', default_value_t = 2)]
+    verbosity: u8,
 }
 
 fn get_config_in_dir(path: &PathBuf) -> Result<Option<ConfigData>> {
@@ -197,22 +201,37 @@ fn load_tests(
     }
 }
 
-async fn run_tests_thread(tests: &[Test]) -> Vec<TestResult> {
+async fn run_tests_thread(tests: &[Test], verbosity: u8) -> Vec<TestResult> {
     let mut output: Vec<TestResult> = Vec::with_capacity(tests.len());
     for test in tests {
         let result = test.run().await;
-        if result.passed() {
-            println!("  {}  {}", "PASS".green(), result.name());
-        } else {
-            println!("  {}  {}", "FAIL".red().bold(), result.name());
+        if verbosity >= 1 {
+            if result.passed() {
+                println!("  {}  {}", "PASS".green(), result.name());
+            } else {
+                println!("  {}  {}", "FAIL".red().bold(), result.name());
+            }
+            if verbosity >= 3 {
+                for assertion in result.assertions() {
+                    if assertion.passed {
+                        println!("      {}  {}", "✓".green(), assertion.name);
+                    } else {
+                        println!(
+                            "      {}  {}",
+                            "✗".red(),
+                            assertion.message.as_deref().unwrap_or(&assertion.name)
+                        );
+                    }
+                }
+            }
+            io::stdout().flush().unwrap();
         }
-        io::stdout().flush().unwrap();
         output.push(result);
     }
     output
 }
 
-async fn run_tests(tests: &[Test], threads: Option<u64>) -> Vec<TestResult> {
+async fn run_tests(tests: &[Test], threads: Option<u64>, verbosity: u8) -> Vec<TestResult> {
     let num_threads = threads.unwrap_or_else(|| {
         let available = std::thread::available_parallelism()
             .map(|n| n.get())
@@ -221,7 +240,7 @@ async fn run_tests(tests: &[Test], threads: Option<u64>) -> Vec<TestResult> {
     });
 
     if num_threads == 1 {
-        return run_tests_thread(tests).await;
+        return run_tests_thread(tests, verbosity).await;
     }
 
     // Group tests by source file before distributing to threads. Tests in the
@@ -262,7 +281,7 @@ async fn run_tests(tests: &[Test], threads: Option<u64>) -> Vec<TestResult> {
             let tx_clone = tx.clone();
             s.spawn(move || {
                 let rt = Runtime::new().expect("Failed to create runtime");
-                let group_results = rt.block_on(async { run_tests_thread(&group).await });
+                let group_results = rt.block_on(async { run_tests_thread(&group, verbosity).await });
                 let _ = tx_clone.send(group_results);
             });
         }
@@ -296,13 +315,19 @@ async fn main() {
         }
     }
 
-    let divider = "─".repeat(40);
-    println!("yapitest v{}", env!("CARGO_PKG_VERSION"));
-    println!("{}", divider.dimmed());
+    let verbosity = args.verbosity;
+
+    if verbosity >= 2 {
+        let divider = "─".repeat(40);
+        println!("yapitest v{}", env!("CARGO_PKG_VERSION"));
+        println!("{}", divider.dimmed());
+    }
 
     let mut configs: HashMap<PathBuf, Arc<RwLock<ConfigData>>> = HashMap::new();
     let mut tests: Vec<Test> = vec![];
-    println!("{}", "Collecting tests...".dimmed());
+    if verbosity >= 2 {
+        println!("{}", "Collecting tests...".dimmed());
+    }
     for path in &test_paths {
         match load_tests(&mut configs, path) {
             Ok(found_tests) => tests.extend(found_tests),
@@ -335,14 +360,18 @@ async fn main() {
         tests.retain(|t| !contains_text(t, &excludes));
     }
 
-    println!("{}", format!("Found {} tests", tests.len()).dimmed());
-    println!();
-    let test_results = run_tests(&tests, args.threads).await;
+    if verbosity >= 2 {
+        println!("{}", format!("Found {} tests", tests.len()).dimmed());
+        println!();
+    }
+    let test_results = run_tests(&tests, args.threads, verbosity).await;
     let end_time = SystemTime::now();
     let duration = end_time
         .duration_since(start_time)
         .expect("Time went backwards")
         .as_secs_f32();
-    println!();
-    print_test_results(&test_results, duration);
+    print_test_results(&test_results, duration, verbosity);
+
+    let any_failed = test_results.iter().any(|r| !r.passed());
+    std::process::exit(if any_failed { 1 } else { 0 });
 }
