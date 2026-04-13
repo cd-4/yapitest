@@ -1,11 +1,14 @@
 # Yapitest
 
-Yapitest (Yaml API Testing) is an API testing framework composed entirely of YAML files. Testing is frustrating enough already, and Yapitest aims to simplify the entire process of API testing through a simple interface. Frankly, the entire `expect(value).toBe(0)` stuff keeps me up at night.
+Yapitest (Yaml API Testing) is an API testing framework where tests are defined entirely in YAML files. No test runners, no assertion libraries, no boilerplate — just declare what you want to call and what you expect back. Frankly, the entire `expect(value).toBe(0)` stuff keeps me up at night.
+
+The Rust implementation is the primary focus of active development and is the recommended way to use Yapitest.
 
 ### Table of Contents
 
 - [Example](#example)
 - [Installation](#installation)
+- [Usage](#usage)
 - [Further Documentation](#further-documentation)
   - [Config Files](./Configs.md)
   - [Tests](./Tests.md)
@@ -60,13 +63,63 @@ For more information about how to format your tests, please refer to [Tests.md](
 
 ## Installation
 
-To install, run:
+Install using [Cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html):
 
-```
-pip install yapitest
+```bash
+cargo install yapitest
 ```
 
 Then you can run it via `yapitest` in your terminal.
+
+## Usage
+
+Point `yapitest` at one or more directories or YAML files:
+
+```bash
+yapitest ./tests
+yapitest ./tests/test-users.yaml ./tests/test-posts.yaml
+```
+
+**Filtering**
+
+```bash
+yapitest ./tests -g auth          # only tests tagged with the "auth" group
+yapitest ./tests -i login         # only tests whose name contains "login"
+yapitest ./tests -x slow          # exclude tests whose name contains "slow"
+```
+
+Flags can be repeated to filter by multiple values:
+
+```bash
+yapitest ./tests -g auth -g admin
+```
+
+**Parallelism**
+
+By default, tests run on a single thread. Use `-t` to run tests across multiple threads:
+
+```bash
+yapitest ./tests -t 4
+```
+
+**Verbosity**
+
+Control how much output is printed:
+
+```bash
+yapitest ./tests -v 0   # silent — no output
+yapitest ./tests -v 1   # test names only
+yapitest ./tests -v 2   # default — names + pass/fail (default)
+yapitest ./tests -v 3   # full assertion detail
+```
+
+**CTRF Report**
+
+Write a [CTRF](https://ctrf.io) JSON report to a file:
+
+```bash
+yapitest ./tests --output results.json
+```
 
 ## Further Documentation
 
