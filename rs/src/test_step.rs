@@ -106,14 +106,18 @@ pub fn get_variable(
                     } else {
                         return Err(anyhow!(
                             "'{}' — '{}' not found in step '{}'",
-                            name, field_key, step_id
+                            name,
+                            field_key,
+                            step_id
                         ));
                     }
                 }
                 Err(_) => {
                     return Err(anyhow!(
                         "'{}' — '{}' not found in step '{}'",
-                        name, field_key, step_id
+                        name,
+                        field_key,
+                        step_id
                     ));
                 }
             }
@@ -122,7 +126,8 @@ pub fn get_variable(
         let step_id = segments.into_iter().next().unwrap_or_default();
         return Err(anyhow!(
             "'{}' — no step with id '{}' was found",
-            name, step_id
+            name,
+            step_id
         ));
     }
     Err(anyhow!("'{}' could not be resolved", name))
@@ -208,7 +213,8 @@ pub fn clean_headers(
                     } else {
                         return Err(anyhow!(
                             "header '{}': '{}' resolved to a non-string value",
-                            k, v
+                            k,
+                            v
                         ));
                     }
                 }
@@ -347,13 +353,16 @@ pub fn compare_data_objects(
                     Ok(false) => {
                         return Err(anyhow!(
                             "len({}) expected {}, got {}",
-                            field_path, cmp_str, actual_len
+                            field_path,
+                            cmp_str,
+                            actual_len
                         ));
                     }
                     Err(_) => {
                         return Err(anyhow!(
                             "invalid size comparison '{}' on field '{}'",
-                            cmp_str, field_path
+                            cmp_str,
+                            field_path
                         ));
                     }
                 },
@@ -389,11 +398,17 @@ pub fn compare_array_objects(
         let path = keys.trim_start_matches('.');
         return Err(anyhow!(
             "'{}' — expected {} item(s), got {}",
-            path, num_expected, num_observed
+            path,
+            num_expected,
+            num_observed
         ));
     }
 
-    for (index, (observed, expected)) in observed_object.iter().zip(expected_object.iter()).enumerate() {
+    for (index, (observed, expected)) in observed_object
+        .iter()
+        .zip(expected_object.iter())
+        .enumerate()
+    {
         let new_keys = format!("{}.[{}]", keys, index);
         compare_data_inner(observed, expected, full, &new_keys, config, prior_steps)?;
     }
@@ -473,7 +488,10 @@ pub fn compare_primitive_values(
                 };
                 return Err(anyhow!(
                     "'{}' — expected {}, got {} ({})",
-                    path, readable_type, value_type_name(observed), observed
+                    path,
+                    readable_type,
+                    value_type_name(observed),
+                    observed
                 ));
             }
             return Ok(());
@@ -482,7 +500,9 @@ pub fn compare_primitive_values(
             if !value_eq(&exp_var, observed) {
                 return Err(anyhow!(
                     "'{}' — expected {}, got {}",
-                    path, exp_var, observed
+                    path,
+                    exp_var,
+                    observed
                 ));
             } else {
                 return Ok(());
@@ -504,7 +524,9 @@ pub fn compare_primitive_values(
     if !value_eq(observed, expected) {
         Err(anyhow!(
             "'{}' — expected {}, got {}",
-            path, expected, observed
+            path,
+            expected,
+            observed
         ))
     } else {
         Ok(())
