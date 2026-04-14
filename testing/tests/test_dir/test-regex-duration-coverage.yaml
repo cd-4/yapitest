@@ -1,0 +1,117 @@
+
+# === PASS TESTS ===
+# These tests exercise regex generation/matching and duration assertions.
+# All should pass against a healthy server.
+
+test-re-assert-alphanumeric-pass:
+  steps:
+    - path: /api/user/create
+      method: POST
+      data:
+        username: re-assert-pass-001
+        password: repass001!
+      assert:
+        status-code: 200
+        body:
+          token: re/[a-zA-Z0-9]+
+
+test-re-assert-exact-length-pass:
+  # Token is always exactly 20 alphanumeric chars
+  steps:
+    - path: /api/user/create
+      method: POST
+      data:
+        username: re-assert-pass-002
+        password: repass002!
+      assert:
+        status-code: 200
+        body:
+          token: re/[a-zA-Z0-9]{20}
+
+test-re-generate-creates-user-pass:
+  # Generated username is sent to the server and the server accepts it
+  steps:
+    - path: /api/user/create
+      method: POST
+      data:
+        username: re/re-gen-[a-z]{6}
+        password: regenpass001!
+      assert:
+        status-code: 200
+        body:
+          token: +str
+
+test-re-generate-reusable-in-later-step-pass:
+  # Generated value is stored in request_data and accessible via $step.data.field
+  steps:
+    - id: create-regen-user
+      path: /api/user/create
+      method: POST
+      data:
+        username: re/rg-[a-z]{6}
+        password: regenreusepass!
+      assert:
+        status-code: 200
+    - path: /api/user/login
+      method: POST
+      data:
+        username: $create-regen-user.data.username
+        password: regenreusepass!
+      assert:
+        status-code: 200
+        body:
+          token: +str
+
+test-duration-ms-syntax-pass:
+  steps:
+    - path: /api/healthz
+      assert:
+        status-code: 200
+        duration: 5000ms
+
+test-duration-s-syntax-pass:
+  steps:
+    - path: /api/healthz
+      assert:
+        status-code: 200
+        duration: 5s
+
+test-duration-bare-int-pass:
+  steps:
+    - path: /api/healthz
+      assert:
+        status-code: 200
+        duration: 5000
+
+# === FAIL TESTS ===
+# These tests are intentionally wrong and should fail.
+# They exist to verify that the framework correctly detects each assertion failure.
+
+test-re-assert-no-match-fail:
+  # Token contains letters — all-digits pattern must fail
+  steps:
+    - path: /api/user/create
+      method: POST
+      data:
+        username: re-assert-fail-001
+        password: refail001!
+      assert:
+        status-code: 200
+        body:
+          token: re/^[0-9]+$
+
+test-re-assert-non-string-fail:
+  # Asserting a regex against a non-string field (healthy is bool) must fail
+  steps:
+    - path: /api/healthz
+      assert:
+        body:
+          healthy: re/true
+
+test-duration-too-tight-fail:
+  # 1ms is tighter than any real HTTP round-trip
+  steps:
+    - path: /api/healthz
+      assert:
+        status-code: 200
+        duration: 1ms
