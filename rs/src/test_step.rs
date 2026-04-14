@@ -89,11 +89,13 @@ pub fn get_variable(
 
         if let Some(cfg) = config {
             if let Ok(new_val) = cfg.read().unwrap().get_string_value(value_key) {
-                current_key = new_val;
-                if current_key.starts_with('$') {
+                if new_val.starts_with('$') {
+                    current_key = new_val;
                     continue 'outer;
+                } else if let Some(pattern) = new_val.strip_prefix("re/") {
+                    return Ok(Value::String(generate_regex_string(pattern)?));
                 } else {
-                    return Ok(Value::from(current_key));
+                    return Ok(Value::from(new_val));
                 }
             }
         }
@@ -144,6 +146,18 @@ pub fn get_variable(
     Err(anyhow!("'{}' could not be resolved", name))
 }
 
+pub fn generate_regex_string(pattern: &str) -> Result<String> {
+    use regex_generate::{DEFAULT_MAX_REPEAT, Generator};
+    let mut generator = Generator::new(pattern, rand::thread_rng(), DEFAULT_MAX_REPEAT)
+        .map_err(|e| anyhow!("invalid regex pattern 're/{}': {}", pattern, e))?;
+    let mut buffer = vec![];
+    generator
+        .generate(&mut buffer)
+        .map_err(|e| anyhow!("failed to generate string for 're/{}': {}", pattern, e))?;
+    String::from_utf8(buffer)
+        .map_err(|e| anyhow!("generated string for 're/{}' is not valid UTF-8: {}", pattern, e))
+}
+
 fn parse_duration(v: &Value) -> Result<std::time::Duration> {
     if let Some(n) = v.as_u64() {
         return Ok(std::time::Duration::from_millis(n));
@@ -190,15 +204,7 @@ pub fn clean_request_data(
         Ok(Value::Array(new_val))
     } else if let Some(data_str) = request_data.as_str() {
         if let Some(pattern) = data_str.strip_prefix("re/") {
-            use regex_generate::{DEFAULT_MAX_REPEAT, Generator};
-            let mut generator = Generator::new(pattern, rand::thread_rng(), DEFAULT_MAX_REPEAT)
-                .map_err(|e| anyhow!("invalid regex pattern 're/{}': {}", pattern, e))?;
-            let mut buffer = vec![];
-            generator.generate(&mut buffer)
-                .map_err(|e| anyhow!("failed to generate string for 're/{}': {}", pattern, e))?;
-            let generated = String::from_utf8(buffer)
-                .map_err(|e| anyhow!("generated string for 're/{}' is not valid UTF-8: {}", pattern, e))?;
-            Ok(Value::String(generated))
+            Ok(Value::String(generate_regex_string(pattern)?))
         } else if data_str.starts_with('$') {
             get_variable(data_str, config, prior_steps)
         } else {

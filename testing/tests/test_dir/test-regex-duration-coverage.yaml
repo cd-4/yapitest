@@ -41,6 +41,32 @@ test-re-generate-creates-user-pass:
         body:
           token: +str
 
+test-re-generate-in-config-var-pass:
+  # re/ in a config var generates a fresh value per step that references it
+  config:
+    vars:
+      generated-username: re/cfg-[a-z]{6}
+  steps:
+    - id: create-cfg-var-user
+      path: /api/user/create
+      method: POST
+      data:
+        username: $vars.generated-username
+        password: cfgvarpass!
+      assert:
+        status-code: 200
+        body:
+          token: +str
+    - path: /api/user/login
+      method: POST
+      data:
+        username: $create-cfg-var-user.data.username
+        password: cfgvarpass!
+      assert:
+        status-code: 200
+        body:
+          token: +str
+
 test-re-generate-reusable-in-later-step-pass:
   # Generated value is stored in request_data and accessible via $step.data.field
   steps:
