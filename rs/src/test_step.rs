@@ -1,6 +1,7 @@
 use crate::config::ConfigData;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use rand;
 use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Method};
@@ -159,7 +160,17 @@ pub fn clean_request_data(
         }
         Ok(Value::Array(new_val))
     } else if let Some(data_str) = request_data.as_str() {
-        if data_str.starts_with('$') {
+        if let Some(pattern) = data_str.strip_prefix("re/") {
+            use regex_generate::{DEFAULT_MAX_REPEAT, Generator};
+            let mut generator = Generator::new(pattern, rand::thread_rng(), DEFAULT_MAX_REPEAT)
+                .map_err(|e| anyhow!("invalid regex pattern 're/{}': {}", pattern, e))?;
+            let mut buffer = vec![];
+            generator.generate(&mut buffer)
+                .map_err(|e| anyhow!("failed to generate string for 're/{}': {}", pattern, e))?;
+            let generated = String::from_utf8(buffer)
+                .map_err(|e| anyhow!("generated string for 're/{}' is not valid UTF-8: {}", pattern, e))?;
+            Ok(Value::String(generated))
+        } else if data_str.starts_with('$') {
             get_variable(data_str, config, prior_steps)
         } else {
             Ok(Value::from(data_str))
@@ -527,6 +538,52 @@ pub fn compare_primitive_values(
                 });
             }
             return type_ok;
+        } else if let Some(pattern) = exp_str.strip_prefix("re/") {
+            let name = format!("{} (re/{})", path, pattern);
+            match Regex::new(pattern) {
+                Err(e) => {
+                    assertions.push(AssertionResult {
+                        name,
+                        passed: false,
+                        message: Some(format!(
+                            "'{}' — invalid regex pattern 're/{}': {}",
+                            path, pattern, e
+                        )),
+                    });
+                    return false;
+                }
+                Ok(re) => {
+                    match observed.as_str() {
+                        None => {
+                            assertions.push(AssertionResult {
+                                name,
+                                passed: false,
+                                message: Some(format!(
+                                    "'{}' — expected a string to match re/{}, got {} ({})",
+                                    path, pattern, value_type_name(observed), observed
+                                )),
+                            });
+                            return false;
+                        }
+                        Some(obs_str) => {
+                            let passed = re.is_match(obs_str);
+                            assertions.push(AssertionResult {
+                                name,
+                                passed,
+                                message: if passed {
+                                    None
+                                } else {
+                                    Some(format!(
+                                        "'{}' — expected to match re/{}, got '{}'",
+                                        path, pattern, obs_str
+                                    ))
+                                },
+                            });
+                            return passed;
+                        }
+                    }
+                }
+            }
         } else if exp_str.starts_with('$') {
             match get_variable(exp_str, config, prior_steps) {
                 Ok(exp_var) => {
@@ -900,5 +957,126 @@ impl RunnableTestStep for TestStep {
             output_data: None,
             assertion_results: assertions,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    fn no_config() -> Option<Arc<RwLock<ConfigData>>> {
+        None
+    }
+
+    fn no_prior_steps() -> HashMap<String, TestStepResult> {
+        HashMap::new()
+    }
+
+    fn run_assert(observed: Value, expected: Value) -> Vec<AssertionResult> {
+        let mut assertions = vec![];
+        compare_primitive_values(
+            &observed,
+            &expected,
+            "field",
+            &no_config(),
+            &no_prior_steps(),
+            &mut assertions,
+        );
+        assertions
+    }
+
+    // ── Generation tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_re_generate_produces_match() {
+        let pattern = "re/[a-z]{8}";
+        let input = json!(pattern);
+        let result = clean_request_data(&input, &no_config(), &no_prior_steps())
+            .expect("generation should succeed");
+        let generated = result.as_str().expect("result should be a string");
+
+        // The generated string must match the pattern (strip re/ prefix)
+        let re = Regex::new("[a-z]{8}").unwrap();
+        assert!(
+            re.is_match(generated),
+            "generated '{}' does not match [a-z]{{8}}",
+            generated
+        );
+    }
+
+    #[test]
+    fn test_re_generate_not_literal() {
+        let input = json!("re/[a-z]{8}");
+        let result = clean_request_data(&input, &no_config(), &no_prior_steps())
+            .expect("generation should succeed");
+        let generated = result.as_str().expect("result should be a string");
+        assert_ne!(
+            generated, "re/[a-z]{8}",
+            "result should not be the literal pattern string"
+        );
+    }
+
+    #[test]
+    fn test_re_generate_invalid_pattern_errors() {
+        let input = json!("re/[invalid");
+        let result = clean_request_data(&input, &no_config(), &no_prior_steps());
+        assert!(result.is_err(), "invalid pattern should return Err");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("invalid regex pattern"),
+            "error message should mention invalid regex pattern, got: {}",
+            msg
+        );
+    }
+
+    // ── Assertion tests ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_re_assert_passes_on_match() {
+        let results = run_assert(json!("hello"), json!("re/[a-z]+"));
+        assert_eq!(results.len(), 1);
+        assert!(results[0].passed, "assertion should pass for matching string");
+    }
+
+    #[test]
+    fn test_re_assert_fails_on_no_match() {
+        let results = run_assert(json!("HELLO"), json!("re/[a-z]+"));
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].passed, "assertion should fail for non-matching string");
+        let msg = results[0].message.as_deref().unwrap_or("");
+        assert!(
+            msg.contains("expected to match re/[a-z]+"),
+            "error message should describe the mismatch, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_re_assert_fails_for_non_string_observed() {
+        let results = run_assert(json!(42), json!("re/[a-z]+"));
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].passed, "assertion should fail when observed is not a string");
+        let msg = results[0].message.as_deref().unwrap_or("");
+        assert!(
+            msg.contains("expected a string to match"),
+            "error message should mention type mismatch, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_re_assert_invalid_pattern_fails() {
+        let results = run_assert(json!("hello"), json!("re/[invalid"));
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].passed, "invalid pattern should produce a failed assertion");
+        let msg = results[0].message.as_deref().unwrap_or("");
+        assert!(
+            msg.contains("invalid regex pattern"),
+            "error message should mention invalid regex pattern, got: {}",
+            msg
+        );
     }
 }
