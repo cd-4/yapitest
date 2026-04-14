@@ -690,6 +690,39 @@ pub fn compare_data(
     compare_data_inner(observed, expected, full, "", config, prior_steps, assertions)
 }
 
+fn push_duration_assertion(
+    assertions: &mut Vec<AssertionResult>,
+    expected: Option<&Value>,
+    elapsed: std::time::Duration,
+) {
+    let Some(dur_val) = expected else { return };
+    match parse_duration(dur_val) {
+        Err(e) => {
+            assertions.push(AssertionResult {
+                name: "duration".to_owned(),
+                passed: false,
+                message: Some(e.to_string()),
+            });
+        }
+        Ok(limit) => {
+            let passed = elapsed < limit;
+            assertions.push(AssertionResult {
+                name: "duration".to_owned(),
+                passed,
+                message: if passed {
+                    None
+                } else {
+                    Some(format!(
+                        "request took {}ms, expected less than {}ms",
+                        elapsed.as_millis(),
+                        limit.as_millis(),
+                    ))
+                },
+            });
+        }
+    }
+}
+
 impl TestStepResult {
     pub fn make_failure(
         step_id: Option<&str>,
@@ -900,6 +933,8 @@ impl RunnableTestStep for TestStep {
         let mut assertions: Vec<AssertionResult> = Vec::new();
         let mut response_data: Option<Value> = None;
 
+        let t0 = std::time::Instant::now();
+
         match client
             .request(self.method.clone(), full_url)
             .headers(headers)
@@ -909,6 +944,8 @@ impl RunnableTestStep for TestStep {
         {
             Ok(response) => {
                 let actual_status_code = response.status().as_u16();
+                let res_text = response.text().await?;
+                let elapsed = t0.elapsed();
 
                 if let Some(exp_status_code) = &self.expected_status_code {
                     let passed = TestStep::check_status_code(exp_status_code, actual_status_code);
@@ -921,6 +958,7 @@ impl RunnableTestStep for TestStep {
                     });
                     if !passed {
                         let msg = assertions.last().unwrap().message.clone().unwrap_or_default();
+                        push_duration_assertion(&mut assertions, self.expected_duration.as_ref(), elapsed);
                         return Ok(TestStepResult {
                             step_id: self.id.clone(),
                             status: TestStepFailureReason::StatusCodeError,
@@ -933,8 +971,6 @@ impl RunnableTestStep for TestStep {
                     }
                 }
 
-                let res_text = response.text().await?;
-
                 match serde_json::from_str::<Value>(&res_text) {
                     Ok(actual_response) => {
                         if let Some(expected_response) = &self.expected_response_data {
@@ -946,6 +982,7 @@ impl RunnableTestStep for TestStep {
                                 !self.allow_missing_fields,
                                 &mut assertions,
                             );
+                            push_duration_assertion(&mut assertions, self.expected_duration.as_ref(), elapsed);
                             if !all_passed {
                                 let msg = assertions.iter()
                                     .find(|a| !a.passed)
@@ -961,6 +998,8 @@ impl RunnableTestStep for TestStep {
                                     assertion_results: assertions,
                                 });
                             }
+                        } else {
+                            push_duration_assertion(&mut assertions, self.expected_duration.as_ref(), elapsed);
                         }
                         response_data = Some(actual_response);
                     }
