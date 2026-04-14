@@ -36,6 +36,7 @@ pub struct TestStepAssertionSpec {
     status_code: Option<Value>,
     body: Option<Value>,
     full: Option<bool>,
+    duration: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -140,6 +141,33 @@ pub fn get_variable(
         ));
     }
     Err(anyhow!("'{}' could not be resolved", name))
+}
+
+fn parse_duration(v: &Value) -> Result<std::time::Duration> {
+    if let Some(n) = v.as_u64() {
+        return Ok(std::time::Duration::from_millis(n));
+    }
+    if let Some(s) = v.as_str() {
+        if let Some(ms_str) = s.strip_suffix("ms") {
+            let ms: u64 = ms_str.parse().map_err(|_| {
+                anyhow!("invalid duration '{}' — use '500ms', '2s', or a bare integer (milliseconds)", s)
+            })?;
+            return Ok(std::time::Duration::from_millis(ms));
+        }
+        if let Some(s_str) = s.strip_suffix('s') {
+            let secs: u64 = s_str.parse().map_err(|_| {
+                anyhow!("invalid duration '{}' — use '500ms', '2s', or a bare integer (milliseconds)", s)
+            })?;
+            return Ok(std::time::Duration::from_secs(secs));
+        }
+        if let Ok(ms) = s.parse::<u64>() {
+            return Ok(std::time::Duration::from_millis(ms));
+        }
+    }
+    Err(anyhow!(
+        "invalid duration '{}' — use '500ms', '2s', or a bare integer (milliseconds)",
+        v
+    ))
 }
 
 pub fn clean_request_data(
@@ -1078,5 +1106,55 @@ mod tests {
             "error message should mention invalid regex pattern, got: {}",
             msg
         );
+    }
+
+    // ── parse_duration tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_duration_bare_int_value() {
+        let result = parse_duration(&json!(500u64)).unwrap();
+        assert_eq!(result, std::time::Duration::from_millis(500));
+    }
+
+    #[test]
+    fn test_parse_duration_bare_int_string() {
+        let result = parse_duration(&json!("500")).unwrap();
+        assert_eq!(result, std::time::Duration::from_millis(500));
+    }
+
+    #[test]
+    fn test_parse_duration_ms_suffix() {
+        let result = parse_duration(&json!("250ms")).unwrap();
+        assert_eq!(result, std::time::Duration::from_millis(250));
+    }
+
+    #[test]
+    fn test_parse_duration_s_suffix() {
+        let result = parse_duration(&json!("2s")).unwrap();
+        assert_eq!(result, std::time::Duration::from_millis(2000));
+    }
+
+    #[test]
+    fn test_parse_duration_invalid_string() {
+        let result = parse_duration(&json!("fast"));
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("invalid duration"),
+            "expected 'invalid duration' in error, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_parse_duration_float_rejected() {
+        let result = parse_duration(&json!("1.5s"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_duration_float_number_rejected() {
+        let result = parse_duration(&serde_json::json!(1.5_f64));
+        assert!(result.is_err());
     }
 }
