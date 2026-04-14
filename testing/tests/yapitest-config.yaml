@@ -5,10 +5,10 @@ vars:
     default: http://127.0.0.1:8181
   sample-user:
     env: SAMPLE_USERNAME
-    default: test-user-123
+    default: re/[A-Z][a-z]{6,12}-[0-9]{1,4}
   sample-password:
     env: SAMPLE_PASSWORD
-    default: p4ssw0rd123!
+    default: re/[a-zA-Z0-9-_]+
 
 urls:
   base: $vars.default-url

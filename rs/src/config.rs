@@ -94,10 +94,13 @@ impl TestStepGroup {
 
                 let step_id = match output_sections.first() {
                     Some(v) => *v,
-                    None => return Err(anyhow!(
-                        "output '{}': '{}' is not a valid step reference — expected '$<step-id>.<field>'",
-                        output_key, output_value
-                    )),
+                    None => {
+                        return Err(anyhow!(
+                            "output '{}': '{}' is not a valid step reference — expected '$<step-id>.<field>'",
+                            output_key,
+                            output_value
+                        ));
+                    }
                 };
 
                 if let Some(step) = local_steps.get(step_id) {
@@ -112,13 +115,16 @@ impl TestStepGroup {
                         }
                         return Err(anyhow!(
                             "output '{}': field '{}' not found in step '{}'",
-                            output_key, field_key, step_id,
+                            output_key,
+                            field_key,
+                            step_id,
                         ));
                     }
                 } else {
                     return Err(anyhow!(
                         "output '{}' references step '{}', but no step with that id was found",
-                        output_key, step_id
+                        output_key,
+                        step_id
                     ));
                 }
             }
