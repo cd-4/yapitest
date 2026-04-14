@@ -61,6 +61,7 @@ pub struct TestStep {
     expected_response_data: Option<Value>,
     expected_status_code: Option<Value>,
     allow_missing_fields: bool,
+    expected_duration: Option<Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -815,12 +816,14 @@ impl TestStep {
         let mut expected_response_data: Option<Value> = None;
         let mut expected_status_code: Option<Value> = None;
         let mut full_data: bool = false;
+        let mut expected_duration: Option<Value> = None;
         if let Some(assertion_data) = spec.assert {
             expected_response_data = assertion_data.body;
             expected_status_code = assertion_data.status_code;
             if let Some(full) = assertion_data.full {
                 full_data = full;
             }
+            expected_duration = assertion_data.duration;
         }
 
         TestStep {
@@ -833,6 +836,7 @@ impl TestStep {
             expected_response_data,
             expected_status_code,
             allow_missing_fields: !full_data,
+            expected_duration,
         }
     }
 }

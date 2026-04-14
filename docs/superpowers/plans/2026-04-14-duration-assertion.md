@@ -4,7 +4,7 @@
 
 **Goal:** Add a `duration` field to the `assert` block that validates the HTTP round-trip completed in less than the specified time.
 
-**Architecture:** All changes are in `rs/src/test_step.rs`, with small propagation fixes in `rs/src/config.rs` and `rs/src/test.rs` required by the `from_spec` signature change. A `parse_duration` free function converts the YAML value to `std::time::Duration` at load time. The measurement wraps `send().await` + `response.text().await`. Duration is pushed as a normal `AssertionResult` (never causes early exit on its own).
+**Architecture:** All changes are confined to `rs/src/test_step.rs`. `TestStep` stores the raw `Option<Value>` from the YAML; `from_spec` stays infallible. `parse_duration` is called at assertion time inside `run()` — a bad value surfaces as a failed `AssertionResult` rather than a load-time error. The measurement wraps `send().await` + `response.text().await`. Duration is pushed as a normal `AssertionResult` (never causes early exit on its own).
 
 **Tech Stack:** Rust, `std::time::Instant`, `serde_json::Value` (already in use)
 
@@ -13,8 +13,6 @@
 ## File Map
 
 - **Modify:** `rs/src/test_step.rs` — add `duration` field, `parse_duration`, timing in `run()`, unit tests
-- **Modify:** `rs/src/config.rs` — update `TestStepGroup::from_spec` and its call site to propagate `Result`
-- **Modify:** `rs/src/test.rs` — add `?` to `TestStep::from_spec` call
 
 ---
 
@@ -155,16 +153,14 @@ git add rs/src/test_step.rs && git commit -m "feat: add parse_duration with unit
 
 ---
 
-### Task 2: Wire `parse_duration` into `TestStep` and fix call sites
+### Task 2: Add `expected_duration` field to `TestStep` and populate in `from_spec`
 
 **Files:**
 - Modify: `rs/src/test_step.rs`
-- Modify: `rs/src/config.rs`
-- Modify: `rs/src/test.rs`
 
-- [ ] **Step 1: Add `expected_duration` to `TestStep` struct**
+`from_spec` stays infallible. The raw `Option<Value>` is stored on the struct and parsed at assertion time in `run()`.
 
-In `test_step.rs`, add one field to `TestStep`:
+- [ ] **Step 1: Add `expected_duration: Option<Value>` to `TestStep` struct**
 
 ```rust
 pub struct TestStep {
@@ -177,16 +173,16 @@ pub struct TestStep {
     expected_response_data: Option<Value>,
     expected_status_code: Option<Value>,
     allow_missing_fields: bool,
-    expected_duration: Option<std::time::Duration>,
+    expected_duration: Option<Value>,
 }
 ```
 
-- [ ] **Step 2: Change `TestStep::from_spec` to return `Result<TestStep>`**
+- [ ] **Step 2: Populate `expected_duration` in `from_spec`**
 
-Change the signature and body of `from_spec`. The entire function becomes:
+Add `let mut expected_duration: Option<Value> = None;` before the `if let Some(assertion_data)` block, and set it inside:
 
 ```rust
-pub fn from_spec(spec: TestStepSpec) -> Result<TestStep> {
+pub fn from_spec(spec: TestStepSpec) -> TestStep {
     let mut header_data: HashMap<String, String> = HashMap::new();
     if let Some(headers) = spec.headers {
         header_data = headers;
@@ -200,19 +196,17 @@ pub fn from_spec(spec: TestStepSpec) -> Result<TestStep> {
     let mut expected_response_data: Option<Value> = None;
     let mut expected_status_code: Option<Value> = None;
     let mut full_data: bool = false;
-    let mut expected_duration: Option<std::time::Duration> = None;
+    let mut expected_duration: Option<Value> = None;
     if let Some(assertion_data) = spec.assert {
         expected_response_data = assertion_data.body;
         expected_status_code = assertion_data.status_code;
         if let Some(full) = assertion_data.full {
             full_data = full;
         }
-        if let Some(dur_val) = assertion_data.duration {
-            expected_duration = Some(parse_duration(&dur_val)?);
-        }
+        expected_duration = assertion_data.duration;
     }
 
-    Ok(TestStep {
+    TestStep {
         id: spec.id,
         url: spec.url,
         path: spec.path,
@@ -223,100 +217,22 @@ pub fn from_spec(spec: TestStepSpec) -> Result<TestStep> {
         expected_status_code,
         allow_missing_fields: !full_data,
         expected_duration,
-    })
-}
-```
-
-- [ ] **Step 3: Update `TestStepGroup::from_spec` in `config.rs`**
-
-`config.rs` line 37: change signature and handle `Result`. Replace the entire `TestStepGroup::from_spec` function:
-
-```rust
-pub fn from_spec(id: &str, spec: TestStepGroupSpec, path: &PathBuf) -> Result<TestStepGroup> {
-    let once = spec.once.unwrap_or(false);
-
-    let mut steps: Vec<Arc<dyn RunnableTestStep + Send + Sync>> = vec![];
-    for step in spec.steps {
-        if let Some(step_name) = step.as_str() {
-            panic!("Need to implement step names {}", step_name);
-        } else if let Ok(test_step_spec) = from_value::<TestStepSpec>(step) {
-            steps.push(Arc::new(TestStep::from_spec(test_step_spec)?));
-        }
     }
-
-    Ok(TestStepGroup {
-        id: id.to_owned(),
-        steps,
-        run_once: once,
-        outputs: spec.output,
-        path: path.clone(),
-    })
 }
 ```
 
-- [ ] **Step 4: Update the `TestStepGroup::from_spec` call site in `ConfigData::from_spec` (`config.rs`)**
-
-Find this block (around line 240):
-
-```rust
-step_sets = Some(
-    step_set_specs
-        .into_iter()
-        .map(|(k, v)| {
-            let group = TestStepGroup::from_spec(&k, v, path);
-            (k, group)
-        })
-        .collect(),
-)
-```
-
-Replace with:
-
-```rust
-step_sets = Some(
-    step_set_specs
-        .into_iter()
-        .map(|(k, v)| TestStepGroup::from_spec(&k, v, path).map(|group| (k, group)))
-        .collect::<Result<HashMap<_, _>>>()?,
-)
-```
-
-- [ ] **Step 5: Update the `TestStep::from_spec` call site in `test.rs`**
-
-Find this block (around line 213):
-
-```rust
-match from_value::<TestStepSpec>(step) {
-    Ok(test_step_spec) => {
-        test_steps.push(Arc::new(RwLock::new(TestStep::from_spec(test_step_spec))));
-    }
-    Err(_) => return Err(anyhow!("Error Decoding Step in test {}", name)),
-}
-```
-
-Replace with:
-
-```rust
-match from_value::<TestStepSpec>(step) {
-    Ok(test_step_spec) => {
-        test_steps.push(Arc::new(RwLock::new(TestStep::from_spec(test_step_spec)?)));
-    }
-    Err(_) => return Err(anyhow!("Error Decoding Step in test {}", name)),
-}
-```
-
-- [ ] **Step 6: Build to confirm it compiles**
+- [ ] **Step 3: Build to confirm it compiles**
 
 ```bash
 cd rs && cargo build 2>&1
 ```
 
-Expected: no errors (one pre-existing `dead_code` warning is fine).
+Expected: no errors.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add rs/src/test_step.rs rs/src/config.rs rs/src/test.rs && git commit -m "feat: wire parse_duration into TestStep::from_spec"
+git add rs/src/test_step.rs && git commit -m "feat: store raw duration value on TestStep for deferred parsing"
 ```
 
 ---
@@ -333,24 +249,34 @@ Add this free function to `test_step.rs`, immediately before `impl TestStepResul
 ```rust
 fn push_duration_assertion(
     assertions: &mut Vec<AssertionResult>,
-    expected: Option<std::time::Duration>,
+    expected: Option<&Value>,
     elapsed: std::time::Duration,
 ) {
-    if let Some(limit) = expected {
-        let passed = elapsed < limit;
-        assertions.push(AssertionResult {
-            name: "duration".to_owned(),
-            passed,
-            message: if passed {
-                None
-            } else {
-                Some(format!(
-                    "request took {}ms, expected less than {}ms",
-                    elapsed.as_millis(),
-                    limit.as_millis(),
-                ))
-            },
-        });
+    let Some(dur_val) = expected else { return };
+    match parse_duration(dur_val) {
+        Err(e) => {
+            assertions.push(AssertionResult {
+                name: "duration".to_owned(),
+                passed: false,
+                message: Some(e.to_string()),
+            });
+        }
+        Ok(limit) => {
+            let passed = elapsed < limit;
+            assertions.push(AssertionResult {
+                name: "duration".to_owned(),
+                passed,
+                message: if passed {
+                    None
+                } else {
+                    Some(format!(
+                        "request took {}ms, expected less than {}ms",
+                        elapsed.as_millis(),
+                        limit.as_millis(),
+                    ))
+                },
+            });
+        }
     }
 }
 ```
@@ -469,7 +395,7 @@ Replace it with:
                     });
                     if !passed {
                         let msg = assertions.last().unwrap().message.clone().unwrap_or_default();
-                        push_duration_assertion(&mut assertions, self.expected_duration, elapsed);
+                        push_duration_assertion(&mut assertions, self.expected_duration.as_ref(), elapsed);
                         return Ok(TestStepResult {
                             step_id: self.id.clone(),
                             status: TestStepFailureReason::StatusCodeError,
@@ -493,7 +419,7 @@ Replace it with:
                                 !self.allow_missing_fields,
                                 &mut assertions,
                             );
-                            push_duration_assertion(&mut assertions, self.expected_duration, elapsed);
+                            push_duration_assertion(&mut assertions, self.expected_duration.as_ref(), elapsed);
                             if !all_passed {
                                 let msg = assertions.iter()
                                     .find(|a| !a.passed)
@@ -510,7 +436,7 @@ Replace it with:
                                 });
                             }
                         } else {
-                            push_duration_assertion(&mut assertions, self.expected_duration, elapsed);
+                            push_duration_assertion(&mut assertions, self.expected_duration.as_ref(), elapsed);
                         }
                         response_data = Some(actual_response);
                     }
