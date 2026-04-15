@@ -1,120 +1,314 @@
-# Config File
+# Config Files
 
-Configurations can store shared variables, as well as test setups and cleanups that can be shared across many tests. They can be defined in their own files called `yapitest-config.yaml` or `config.yaml`. Inside of the dedicated config files, all of the parameters can be defined at the top level. Inside of tests, the configurations must be specified inside of the top level `config` key.
+Config files centralise shared settings — base URLs, variables, and reusable step-sets — so tests stay concise and a single change (like a staging URL) propagates everywhere.
 
-During a test, values from a config will be loaded from config files. By default, only config files from the test directory or parent directories will be applied. For example:
+---
+
+## File naming and discovery
+
+A config file must be named one of:
+
+- `yapitest-config.yaml`
+- `yapitest-config.yml`
+- `config.yaml`
+- `config.yml`
+
+Yapitest automatically discovers config files by walking up the directory tree from each test file. Every config found along the path is loaded and chained. The config closest to the test file takes priority.
 
 ```
-yapitest-config.yaml
-  - test_dir/
-    - config.yaml
-    - test_something.yaml
-  - another_test_dir/
-    - config.yaml
-    - another-test.yaml
+/project/
+  yapitest-config.yaml           ← applied to all tests
+  tests/
+    yapitest-config.yaml         ← applied to tests in /tests/ only, inherits from parent
+    auth/
+      test-login.yaml            ← inherits from both configs above
+    posts/
+      yapitest-config.yaml       ← applied to tests in /tests/posts/ only
+      test-posts.yaml
 ```
 
-WHen running `test_something.yaml`, only `yapitest-config.yaml` and `test_dir/config.yaml` will be applied to that test. When searching for config values, if there are conflicts, the config value closest to the test wil be applied. First the config in the test file itself will be tried, then the config in the directory, then it will iterate up the directories to find the value. If the value specified in the test is not found, an error will be thrown.
+When a value (variable, URL, step-set) is looked up, yapitest searches from the test's own inline config outward through the hierarchy. The first definition found wins.
 
+---
 
-### Variables
+## `vars`
 
-Variables can be defined in configs and be accessed by using `$vars.var-name` within tests.
+Named variables accessible in tests as `$vars.<name>`.
 
-An example config can be found below
+### Literal value
 
 ```yaml
-
-# yapitest-config.yaml
-
-# Variables to be used in data or assertions
-variables:
-
-  # Values can be specified directly if they do not change
-  some-value: another-thing
-
-  # Values can also be set from environment variables
-  default_url:
-    env: BASE_URL
-    # If environment variable not found, defaults can be set
-    # If default value is not set and env var is not found, an error will be thrown
-    default: http://127.0.0.1:8181
-
+vars:
+  sample-user: test-user-123
+  base-path: /api/v2
 ```
 
-### Urls
+### From an environment variable
 
-URLs can also be specified inside of config files.
+```yaml
+vars:
+  api-key:
+    env: API_KEY          # reads $API_KEY at runtime; errors if not set
+```
+
+### From an environment variable with a fallback
+
+```yaml
+vars:
+  base-url:
+    env: BASE_URL
+    default: http://127.0.0.1:8181
+```
+
+If `$BASE_URL` is set it is used; otherwise `http://127.0.0.1:8181` is used.
+
+### Generated from a regex pattern
+
+Prefix a value with `re/` to generate a random string matching that pattern each time the variable is resolved. This is useful for creating unique identifiers in test data.
+
+```yaml
+vars:
+  username: "re/user-[a-z]{6}"      # e.g. "user-kqmvtj"
+  order-ref: "re/ORD-[0-9]{8}"      # e.g. "ORD-48291057"
+```
+
+The same `re/` prefix also works directly in step `data` fields:
+
+```yaml
+- path: /api/user/create
+  method: POST
+  data:
+    username: "re/[a-z]{8}"
+```
+
+### Using variables in tests
+
+```yaml
+- data:
+    username: $vars.sample-user
+    api-key: $vars.api-key
+- path: /api/user/$vars.sample-user
+```
+
+---
+
+## `urls`
+
+Named base URLs. The special key `base` is the default URL used by all steps that do not specify a `url` field explicitly.
 
 ```yaml
 urls:
-  default: $vars.default_url.
+  base: http://127.0.0.1:8181
+  admin: http://admin.internal:9000
 ```
 
-In the above example, we are using the variable `default_url` to specify the url with the name `default`.
+URLs can reference variables:
 
-By default, the url specified with the key `default` will be used as the URL for all API tests unless otherwise specified.
+```yaml
+vars:
+  default-url:
+    env: BASE_URL
+    default: http://127.0.0.1:8181
 
-### Steps
+urls:
+  base: $vars.default-url
+```
 
-Test steps can also be defined within the configs. These are sets of steps that can be re-used across multiple tests to reduce duplication.
+Use a named URL in a specific step with `url: $urls.<name>`:
 
-Below is the config for the steps. The layout is the same as the steps defined within tests, and more details can be found in [./Tests.md](./Tests.md).
+```yaml
+steps:
+  - url: $urls.admin
+    path: /api/admin/stats
+    assert:
+      status-code: 200
+```
+
+---
+
+## `step-sets`
+
+Reusable sequences of steps. Step-sets are the primary mechanism for sharing setup, teardown, and common action sequences across tests.
 
 ```yaml
 step-sets:
   create-user:
-    # if `once` is set to true, this step will only be run once per yapitest run. If it is not defined, it will be run each time the step is referenced
-    once: false
+    once: true
     steps:
       - id: create-user
         path: /api/user/create
         method: POST
         data:
-          username: test-user
-          password: test-password
+          username: $vars.sample-user
+          password: secret123!
         assert:
           status-code: 200
           body:
             token: +str
-      - id: create-post
-        path: /api/post/create
+    output:
+      token:    $create-user.response.token
+      username: $create-user.data.username
+```
+
+### `once`
+
+When `once: true`, the step-set runs only once per yapitest session no matter how many tests reference it. The result is cached and reused by all subsequent callers.
+
+This is most useful for expensive or stateful setup that should happen a single time, like creating a shared test user or seeding a database.
+
+```yaml
+step-sets:
+  seed-database:
+    once: true
+    steps:
+      - path: /api/admin/seed
+        method: POST
+```
+
+When `once` is omitted or `false`, the step-set runs fresh for every test that uses it.
+
+### `steps`
+
+The list of steps to execute, using the same format as [test steps](./Tests.md#steps). Step-sets can also reference other step-sets by name for nested composition:
+
+```yaml
+step-sets:
+  create-user:
+    steps:
+      - id: user
+        path: /api/user/create
         method: POST
         data:
-          content: |
-            This is the content for the post
+          username: test-user
+          password: secret!
+    output:
+      token: $user.response.token
+
+  create-user-and-post:
+    steps:
+      - create-user             # inline reference to another step-set
+      - id: post
+        path: /api/post/create
+        method: POST
+        headers:
+          API-Token: $create-user.token
+        data:
+          title: My Post
+    output:
+      token:   $create-user.token
+      post_id: $post.response.post_id
+```
+
+### `output`
+
+Maps string keys to values from the step-set's internal steps. These become the step-set's public interface — how calling tests access results.
+
+```yaml
+output:
+  token:    $create-user.response.token    # from a step's response
+  username: $create-user.data.username    # from a step's request body
+  id:       $create-user.response.id
+```
+
+Output keys are referenced as:
+
+- `$setup.<key>` — when the step-set is used as `setup:`
+- `$<step-set-name>.<key>` — when referenced inline in `steps:`
+
+---
+
+## Using step-sets in tests
+
+### As `setup`
+
+Runs before any test steps. The setup's outputs are accessible via `$setup.<key>`.
+
+```yaml
+test-get-profile:
+  setup: create-user
+  steps:
+    - path: /api/user
+      method: GET
+      headers:
+        API-Token: $setup.token
+      assert:
+        status-code: 200
+        body:
+          name: $setup.username
+```
+
+### As `teardown`
+
+Runs after test steps complete, even if the test failed. If `setup` fails, teardown is not run.
+
+```yaml
+test-temporary-resource:
+  setup:    create-resource
+  teardown: delete-resource
+  steps:
+    - path: /api/resource/$setup.id
+      assert:
+        status-code: 200
+```
+
+### Inline in steps
+
+A plain string in the `steps` list runs a step-set at that point. Outputs are accessible via `$<step-set-name>.<key>`.
+
+```yaml
+test-post-flow:
+  steps:
+    - create-user
+    - path: /api/post/create
+      method: POST
+      headers:
+        API-Token: $create-user.token
+      data:
+        title: Hello
+      assert:
+        status-code: 201
+```
+
+---
+
+## Complete example
+
+```yaml
+# yapitest-config.yaml
+
+vars:
+  sample-user: test-user-123
+  base-url:
+    env: BASE_URL
+    default: http://127.0.0.1:8181
+
+urls:
+  base: $vars.base-url
+
+step-sets:
+  create-user:
+    once: true
+    steps:
+      - id: create-user
+        path: /api/user/create
+        method: POST
+        data:
+          username: $vars.sample-user
+          password: s3cr3t!
         assert:
           status-code: 200
-```
+          body:
+            token: +str
+    output:
+      token:    $create-user.response.token
+      username: $create-user.data.username
 
-These steps could be used in a test like so:
-
-```yaml
-
-test-one:
-  steps:
-    - id: health-check
-      path: /api/healthz
-      assert:
-        status-code: 200
-    # Run the steps in the `create-user` section in the middle of a test
-    - create-user
-    - id: health-check
-      path: /api/healthz
-      assert:
-        status-code: 200
-```
-
-Additionally, there are default `setup` and `cleanup` sections that can be defined in the test like so. When using `cleanup`, the `cleanup` will always run, even if the test fails. However, if the `setup` does not pass, then the `cleanup` will not run.
-
-```yaml
-
-test-one:
-  setup: create-user      # references the steps in `create-user`
-  cleanup: delete-user    # references the steps in `delete-user`
-  steps:
-    - id: health-check
-      path: /api/user/$create-user.data.username
-      assert:
-        status-code: 200
+  delete-user:
+    steps:
+      - path: /api/user
+        method: DELETE
+        headers:
+          API-Token: $setup.token
+        assert:
+          status-code: 200
 ```

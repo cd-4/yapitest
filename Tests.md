@@ -1,207 +1,539 @@
 # Tests
 
-Tests in Yapitest are designed to be easy to understand and implement. Hopefully you can intuitively understand the tests.
-
-Here is an example:
+A test file is any YAML file whose name starts or ends with `test` (e.g. `test-users.yaml`, `auth-tests.yaml`). Each top-level key that starts or ends with `test` (case-insensitive) is treated as a named test. All other keys are ignored.
 
 ```yaml
-# test-basic.yaml
+# test-users.yaml
 
-test-create-user:
-  groups:
-    - pull-request
-    - prod-safe
-  config:
-    vars:
-      example-password: ASDF123
+config:               # optional file-level config (see Config Files)
+  vars:
+    base-password: secret123
+
+test-create-user:     # ← a test (name starts with "test")
   steps:
-    - id: create-user
-      path: /api/user/create
+    - path: /api/user/create
       method: POST
       data:
-        username: $vars.sample-user
-        password: $vars.example-password
+        username: alice
+        password: $vars.base-password
       assert:
         status-code: 200
-        body:
-          token: +str
 
-    - id: check-token
-      path: /api/token/check
-      method: POST
-      #headers:
-      #  API-Token: $create-user.response.token
-      data:
-        token: $create-user.response.token
-      assert:
-        status-code: 200
-        body:
-          success: true
+user-test:            # ← also a valid test name (ends with "test")
+  steps: ...
+```
 
-    - id: check-bad-token
-      path: /api/token/check
-      method: POST
-      data:
-        token: asdf234
-      assert:
-        status-code: 200
-        body:
-          success: false
+---
 
-test-something-else:
-...
+## Test structure
+
+```yaml
+test-name:
+  groups:    [tag1, tag2]       # optional
+  config:    { ... }            # optional inline config
+  setup:     step-set-name      # optional
+  steps:                        # required
+    - ...
+  teardown:  step-set-name      # optional
 ```
 
 ### `groups`
 
-Tests can have `groups` defined which can be used to select what tests are run by using the `-g/--group` flags. This is useful when you have many tests that need to be run in certain contexts. For example, you may have tests that simulat the purchasing of products that are safe to run in the staging environment but not in production, for this reason, you could tag the `group` with a `staging` tag for CI runs. Then when you run in production, the tests tagged with `production` and **not** `staging` would run keeping your production environment safe.
+An optional list of string tags. Used with the `-g` CLI flag to run only matching tests.
+
+```yaml
+test-checkout:
+  groups:
+    - staging
+    - regression
+  steps: ...
+```
+
+```bash
+yapitest tests/ -g regression   # runs test-checkout (and any other test tagged "regression")
+```
+
+A test is included if it belongs to *any* of the specified groups.
 
 ### `config`
 
-Test can also define a `config` section, which matches the same structure as the [Config.md](./Configs.md). This will take priority over other configs.
-
-
-
-## Test Steps
-
-The most important section of a test is the `steps` section, which defines all of the API requests that will be sent to the API in question. Below are the fields that can be used within a test step.
-
-### `id` [optional]
-
-The `id` field can be used if you wish to re-use data from that step in other steps in the test. The properties offered by the step are `data`, which contains the data sent in the API request, and `response` which contains the data received in the API response. If my `id` was set to `create-user` and the API response sent back:
-
-```
-{
-  "user": {
-    "username": "Some_Username",
-    "token": "Some_Token"
-  }
-}
-```
-
-I could use `$create-user.response.user.username` to get re-use that username value.
-Similarly, if I had posted that above data, I could use `$create-user.data.user.username` to retrieve the username.
-
-### `url` [optional]
-
-The `url` field can be used to specify which base URL you'd like to test. If not set, the URL used will be whatever `urls.base` is set to in the nearest config. If not set in any config file, an error will be thrown.
-
-### `path` [required]
-
-The `path` field will be used to specify the path that will be used for the API request. For example, if my `url` is `localhost:8080` and my `path` is `/api/healthz`, the API will send the request to `localhost:8080/api/healthz`.
-
-### `data` [optional]
-
-The `data` field will be what JSON data is sent to the API. If my `data` block looks like this:
+An inline config block scoped to the test. Follows the same structure as a [config file](./Configs.md). Inline config takes priority over any external config files.
 
 ```yaml
-...
-  data:
-    username: SomeUsername
-    password: MyP455W0rd
-    another_field:
-      number: 10
-      name: 'Jerry'
-...
-```
-
-Then the JSON sent to the API endpoint will be this:
-
-```json
-{
-  "username": "SomeUsername",
-  "password": "MyP455W0rd",
-  "another_field": {
-    "number": 10,
-    "name": "Jerry"
-  }
-}
-
-```
-
-Additionally, variables from config files can be used in the `data` block as well. See below for more details.
-
-##### Reusing Other JSON
-
-If you have some data stored in a variable or some other step's output, you can post the entirety of the json by putting it directly after the `data` key, like this:
-
-```yaml
-...
-  data: $vars.some-key
-...
-# Or
-...
-  data: $some-step-id.response.some-value
-...
-```
-
-
-### `assert` [optional]
-
-The `assert` section of the test step can be used to make assertions about the response. An example assertion can look like this:
-
-```yaml
-...
-  assert:
-    status-code: 200
-    body:
+test-something:
+  config:
+    vars:
+      my-password: s3cr3t
+    urls:
+      base: http://staging.example.com
+  steps:
+    - path: /api/login
       data:
-        username: "SomeUsername"
-        bio: $vars.sample-bio
-...
+        password: $vars.my-password
 ```
 
-This assertion block will assert that the status code of the request is 200, and that the response JSON `data.username` and `data.bio` have the correct values.
+### `setup`
 
-Non-specified fields included in the JSON will be ignored. If you wish to assert that every field has been accounted for within the `assert` block, to ensure nothing extra is being returned, you can set `full: true` within the `assert` block.
+Names a [step-set](./Configs.md#step-sets) to run before the test's steps. If setup fails, the test fails immediately and no steps run.
 
-#### Complex Assertions
-
-You can do more complex assertions like so:
-
-##### Status Codes
-
-You can also use something like `4xx` to assert the return code is in from 400-499. This can be done with other ranges as well like `20x`.
-
-##### Field Exists
-
-If you have a field that you just want to ensure exists with a certain type, you can do something like this:
+The setup result is accessible in steps via `$setup.<output-key>`.
 
 ```yaml
-...
-  assert:
-    body:
-      token: +str
-...
+test-create-post:
+  setup: create-user
+  steps:
+    - path: /api/post/create
+      headers:
+        API-Token: $setup.token    # "token" is an output of the create-user step-set
 ```
 
-This will assert that the token value exists and is a `String`. Other types can be used as well:
+### `teardown`
 
-| Type | Assertion |
-| --- | --- |
-| Boolean | `+bool` |
-| String | `+str` |
-| Integer | `+int` |
-| Float | `+float` |
-| Array | `+arr` |
-| Dictionary | `+dict` |
-
-##### Field Sizes
-
-If you have a string, list, or dictionary, you can also assert that the length of it is a certain size using something like this:
+Names a step-set to run after the test's steps complete — even if the test failed. If setup fails, teardown is **not** run.
 
 ```yaml
-...
-  assert:
-    body:
-      len(token): 20
-...
+test-create-and-delete:
+  setup:    create-user
+  teardown: delete-user
+  steps:
+    - path: /api/user
+      assert:
+        status-code: 200
 ```
 
+### `steps`
 
+An ordered list of HTTP steps (or inline step-set references) that make up the test. Steps run in order. If a step fails, the test stops immediately.
 
+---
 
+## Steps
 
+Each entry in `steps` is either a **step object** or a **step-set reference**.
 
+### Step-set references
 
+A plain string in the steps list runs a named step-set inline, as if its steps were inserted at that point. The step-set's outputs are then accessible via `$<step-set-name>.<key>`.
 
+```yaml
+test-example:
+  steps:
+    - create-user               # runs the "create-user" step-set
+    - path: /api/user
+      headers:
+        API-Token: $create-user.token
+      assert:
+        status-code: 200
+```
+
+### Step fields
+
+#### `id` *(optional)*
+
+A name for the step. Required if you want to reference this step's data or response in later steps.
+
+```yaml
+- id: login
+  path: /api/user/login
+  method: POST
+  data:
+    username: alice
+    password: secret
+
+- path: /api/user/profile
+  headers:
+    Authorization: $login.response.token
+```
+
+#### `path` *(required)*
+
+The URL path for the request, appended to the `urls.base` value from config. Path segments may contain variable references.
+
+```yaml
+- path: /api/user/$setup.username
+- path: /api/post/$create-post.response.post_id
+```
+
+A leading `/` is added automatically if missing.
+
+#### `url` *(optional)*
+
+Override the base URL for this step. Can be a literal URL or a `$urls.<name>` reference. If omitted, `urls.base` from the nearest config is used.
+
+```yaml
+- url: http://admin.internal
+  path: /api/admin/users
+
+- url: $urls.secondary
+  path: /api/status
+```
+
+#### `method` *(optional)*
+
+HTTP method. Defaults to `GET` if omitted. Case-insensitive.
+
+```yaml
+method: POST    # GET, PUT, PATCH, DELETE, etc.
+```
+
+#### `headers` *(optional)*
+
+A map of header names to values. Values may be variable references.
+
+```yaml
+headers:
+  API-Token: $setup.token
+  Accept: application/json
+  X-Request-ID: $vars.request-id
+```
+
+#### `data` *(optional)*
+
+The JSON body to send with the request. Nested maps and arrays are supported. String values may be variable references.
+
+```yaml
+data:
+  username: alice
+  role: admin
+  settings:
+    theme: dark
+    notifications: true
+```
+
+You can also use a `re/<pattern>` string to generate a random value matching a regex pattern:
+
+```yaml
+data:
+  username: "re/[a-z]{8}"          # generates e.g. "kqmvtjzr"
+  reference-id: "re/REF-[0-9]{6}"  # generates e.g. "REF-482910"
+```
+
+Or pass an entire step response or variable as the body:
+
+```yaml
+data: $create-user.response        # entire response object
+data: $vars.default-payload        # a variable that holds an object
+```
+
+#### `assert` *(optional)*
+
+Assertions to check against the HTTP response. See [Assertions](#assertions) below.
+
+---
+
+## Variables
+
+Any string value starting with `$` is treated as a variable reference and resolved before the request is sent. References work in `path` segments, `url`, `headers` values, `data` values at any depth, and assertion `body` expected values.
+
+### Syntax
+
+```
+$<namespace>.<key>[.<nested-key>...]
+```
+
+### `$vars.<name>`
+
+A variable defined in a config file or inline test config.
+
+```yaml
+data:
+  username: $vars.sample-user
+  password: $vars.api-key
+```
+
+### `$urls.<name>`
+
+A URL defined in a config file.
+
+```yaml
+- url: $urls.admin
+  path: /api/admin/report
+```
+
+### `$<step-id>.response.<field>`
+
+The JSON response body of a named step. Supports arbitrary nesting.
+
+```yaml
+- id: create-post
+  path: /api/post/create
+  method: POST
+  ...
+
+- path: /api/post/$create-post.response.post_id
+```
+
+```yaml
+- id: login
+  path: /api/login
+  ...
+
+- path: /api/dashboard
+  headers:
+    Authorization: $login.response.auth.token    # nested field
+```
+
+### `$<step-id>.data.<field>`
+
+The JSON **request body** of a named step.
+
+```yaml
+- id: create-user
+  path: /api/user/create
+  method: POST
+  data:
+    username: alice
+
+- path: /api/user/$create-user.data.username    # "alice"
+```
+
+### `$setup.<key>`
+
+An output key from the step-set used as `setup:`. Output keys are defined in the step-set's [`output`](./Configs.md#output) block.
+
+```yaml
+test-example:
+  setup: create-user
+  steps:
+    - path: /api/post/create
+      headers:
+        API-Token: $setup.token
+      data:
+        author: $setup.username
+```
+
+### `$<step-set-name>.<key>`
+
+When a step-set is referenced inline in `steps`, its outputs are accessible by the step-set's name.
+
+```yaml
+steps:
+  - create-user
+  - path: /api/post/create
+    headers:
+      API-Token: $create-user.token
+```
+
+### Resolution order
+
+When a reference like `$foo.bar` is encountered, yapitest resolves it in this order:
+
+1. **Config values** — checks if `foo` is `vars` or `urls`
+2. **Prior steps** — checks if `foo` matches the `id` of a step that has already run
+3. **Setup/step-set outputs** — checks if `foo` matches `setup` or an inline step-set name
+
+If none match, an error is thrown and the test fails immediately.
+
+---
+
+## Assertions
+
+The `assert` block can contain any combination of `status-code`, `body`, `full`, and `duration`.
+
+```yaml
+assert:
+  status-code: 201
+  full: true
+  duration: 500ms
+  body:
+    id: +int
+    title: +str
+    published: false
+```
+
+### `status-code`
+
+**Exact match:**
+
+```yaml
+assert:
+  status-code: 200
+```
+
+**Wildcard match** — use `x` as a digit placeholder:
+
+```yaml
+assert:
+  status-code: 4xx    # matches 400–499
+  status-code: 20x    # matches 200–209
+  status-code: 2xx    # matches 200–299
+```
+
+---
+
+### `body`
+
+Asserts fields within the JSON response body. By default, fields not listed are ignored — see `full` to change this.
+
+#### Exact value
+
+```yaml
+assert:
+  body:
+    status: "active"
+    verified: true
+    count: 0
+```
+
+#### Nested fields
+
+```yaml
+assert:
+  body:
+    user:
+      name: "Alice"
+      role: "admin"
+    meta:
+      page: 1
+```
+
+#### Type assertions
+
+Use `+type` to assert that a field exists and has the correct type, without checking its value.
+
+| Assertion | Matches |
+|-----------|---------|
+| `+str` or `+string` | String |
+| `+int` or `+integer` | Integer |
+| `+float` or `+flt` | Float |
+| `+bool` or `+boolean` | Boolean |
+| `+arr`, `+array`, or `+list` | Array |
+| `+dict`, `+dic`, `+dictionary`, or `+map` | Object |
+
+```yaml
+assert:
+  body:
+    id: +int
+    token: +str
+    tags: +arr
+    metadata: +dict
+    score: +float
+    active: +bool
+```
+
+#### Variable references
+
+An expected value can be a variable reference. The response field must equal the resolved value.
+
+```yaml
+assert:
+  body:
+    username: $setup.username
+    role: $vars.expected-role
+    post_id: $create-post.response.id
+```
+
+#### Regex assertions
+
+Use `re/<pattern>` to assert that a string field matches a regular expression.
+
+```yaml
+assert:
+  body:
+    token: "re/[A-Za-z0-9]{32}"      # exactly 32 alphanumeric chars
+    slug: "re/[a-z0-9-]+"            # lowercase slug
+    created_at: "re/\\d{4}-\\d{2}-\\d{2}"   # ISO date format
+```
+
+#### Size assertions (`len`)
+
+Use `len(field)` as the assertion key to check the length of a string, array, or object.
+
+```yaml
+assert:
+  body:
+    token: +str
+    len(token): 32          # exactly 32 characters
+    len(token): '>=8'       # at least 8 characters
+    len(token): '<=64'      # at most 64 characters
+    items: +arr
+    len(items): '>=1'       # at least one item
+    len(items): '>0'        # more than zero items
+```
+
+Supported operators: `=`, `>=`, `<=`, `>`, `<`.
+
+---
+
+### `full`
+
+When `full: true`, every field in the response body must be explicitly listed in `body`. Any field present in the response but absent from the assertion fails the test.
+
+```yaml
+assert:
+  full: true
+  body:
+    id: +int
+    name: +str
+    email: +str
+    created_at: +str
+```
+
+Useful for detecting when an API starts returning unexpected fields (leaked internal IDs, passwords, etc.) or when a response schema changes unexpectedly.
+
+---
+
+### `duration`
+
+Asserts that the HTTP request completed within a time limit. Accepts milliseconds as an integer, or a string with a `ms` or `s` suffix.
+
+```yaml
+assert:
+  duration: 500       # must complete in under 500ms
+  duration: 500ms     # same
+  duration: 2s        # must complete in under 2 seconds
+```
+
+---
+
+## Complete example
+
+```yaml
+# test-posts.yaml
+
+test-create-and-get-post:
+  setup: create-user          # defined in yapitest-config.yaml
+  steps:
+    - id: new-post
+      path: /api/post/create
+      method: POST
+      headers:
+        API-Token: $setup.token
+      data:
+        title: "Hello World"
+        body: "My first post"
+        ref: "re/REF-[0-9]{6}"   # randomly-generated reference ID
+      assert:
+        status-code: 201
+        duration: 1s
+        body:
+          post_id: +int
+
+    - path: /api/post/$new-post.response.post_id
+      method: GET
+      assert:
+        status-code: 200
+        duration: 500ms
+        full: true
+        body:
+          id: +int
+          title: "Hello World"
+          body: "My first post"
+          user_id: +int
+
+test-delete-requires-auth:
+  steps:
+    - path: /api/post/1
+      method: DELETE
+      assert:
+        status-code: 4xx
+
+test-pagination:
+  steps:
+    - path: /api/post/list
+      assert:
+        status-code: 200
+        body:
+          posts: +arr
+          len(posts): '<=20'
+```

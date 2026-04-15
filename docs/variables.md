@@ -20,7 +20,7 @@ Variable references work in:
 $<namespace>.<key>[.<nested-key>...]
 ```
 
-Keys are dot-separated and resolve into nested objects. For example, `$login.response.user.id` navigates into the `response` → `user` → `id` path of the step named `login`.
+Keys are dot-separated and resolve into nested objects. For example, `$login.response.user.id` navigates `response` → `user` → `id` from the step named `login`.
 
 ---
 
@@ -47,7 +47,7 @@ A URL defined in a [config file](config.md#urls).
 
 ### `$<step-id>.response.<field>`
 
-The JSON response body of a step with a matching `id`. Supports arbitrary nesting.
+The JSON response body of a named step. Supports arbitrary nesting.
 
 ```yaml
 - id: create-post
@@ -56,7 +56,6 @@ The JSON response body of a step with a matching `id`. Supports arbitrary nestin
   ...
 
 - path: /api/post/$create-post.response.post_id
-  #                             ^^^^^^^^^^^^^^^ top-level field from response
 ```
 
 ```yaml
@@ -66,13 +65,12 @@ The JSON response body of a step with a matching `id`. Supports arbitrary nestin
 
 - path: /api/dashboard
   headers:
-    Authorization: $login.response.auth.token
-    #                             ^^^^^^^^^^^ nested field
+    Authorization: $login.response.auth.token    # nested field
 ```
 
 ### `$<step-id>.data.<field>`
 
-The JSON **request body** of a step. Useful for referencing data you sent:
+The JSON **request body** of a named step. Useful for referencing data you sent:
 
 ```yaml
 - id: create-user
@@ -94,9 +92,9 @@ test-example:
   steps:
     - path: /api/post/create
       headers:
-        API-Token: $setup.token       # "token" output from create-user
+        API-Token: $setup.token
       data:
-        author: $setup.username       # "username" output
+        author: $setup.username
 ```
 
 ### `$<step-set-name>.<key>`
@@ -105,40 +103,40 @@ When a step-set is referenced inline in `steps`, its outputs are accessible by t
 
 ```yaml
 steps:
-  - create-user                       # inline step-set reference
+  - create-user
   - path: /api/post/create
     headers:
-      API-Token: $create-user.token   # output key from create-user
+      API-Token: $create-user.token
 ```
 
 ---
 
-## Variable resolution order
+## Resolution order
 
-When a variable reference like `$foo.bar` is encountered, yapitest resolves it in this order:
+When a reference like `$foo.bar` is encountered, yapitest resolves it in this order:
 
-1. **Config values** — checks if `foo` is `vars` or `urls` and returns the matching config entry.
-2. **Prior steps** — checks if `foo` matches the `id` of a step that has already run, then navigates the dot-path into its `response` or `data`.
-3. **Setup/step-set outputs** — checks if `foo` matches `setup` or the name of an inline step-set reference.
+1. **Config values** — checks if `foo` is `vars` or `urls` and returns the matching entry
+2. **Prior steps** — checks if `foo` matches the `id` of a step that has already run, then navigates the dot-path into its `response` or `data`
+3. **Setup/step-set outputs** — checks if `foo` matches `setup` or the name of an inline step-set reference
 
-If none of these match, an error is thrown and the test fails.
+If none of these match, an error is thrown and the test fails immediately.
 
 ---
 
 ## Variables in paths
 
-Variables in path segments are resolved individually per segment (split on `/`). The resolved value must be a string or integer; other types cause an error.
+Variables in path segments are resolved per `/`-delimited segment. The resolved value must be a string or integer; other types cause an error.
 
 ```yaml
-path: /api/user/$setup.username          # string segment
-path: /api/post/$new-post.response.id   # integer segment — converted to string
+path: /api/user/$setup.username
+path: /api/post/$new-post.response.id    # integer — converted to string automatically
 ```
 
 ---
 
 ## Variables as entire data payloads
 
-A variable reference can be used as the entire `data` value to forward a complete object:
+A variable reference can be the entire `data` value to forward a complete object:
 
 ```yaml
 - id: original
@@ -157,7 +155,7 @@ A variable reference can be used as the entire `data` value to forward a complet
 
 ## Variables in assertions
 
-Expected values in `body` assertions can be variable references. The actual response field is compared against the resolved variable value:
+Expected values in `body` assertions can be variable references. The actual response field is compared against the resolved value:
 
 ```yaml
 test-profile-reflects-setup:
@@ -169,5 +167,19 @@ test-profile-reflects-setup:
         API-Token: $setup.token
       assert:
         body:
-          name: $setup.username     # must equal the username from setup
+          name: $setup.username
 ```
+
+---
+
+## Regex generation
+
+Prefix any string value with `re/` to generate a random string matching that regular expression. This works in `data` fields and in [config `vars`](config.md#generated-from-a-regex-pattern).
+
+```yaml
+data:
+  username: "re/[a-z]{8}"           # e.g. "kqmvtjzr"
+  reference: "re/REF-[0-9]{6}"     # e.g. "REF-482910"
+```
+
+A new value is generated for each step that uses it.
