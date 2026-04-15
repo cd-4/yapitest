@@ -140,6 +140,108 @@ fn is_test_name(key: &str) -> bool {
     lower_name.starts_with("test") || lower_name.ends_with("test")
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_step::{AssertionResult, TestStepFailureReason, TestStepResult};
+
+    fn make_step_failure(msg: &str) -> TestStepResult {
+        TestStepResult::make_failure(
+            Some("step"),
+            TestStepFailureReason::StatusCodeError,
+            msg.to_owned(),
+        )
+    }
+
+    // ── is_test_name ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_is_test_name_prefix() {
+        assert!(is_test_name("test_login"));
+        assert!(is_test_name("Test Login"));
+        assert!(is_test_name("TEST_CREATE_USER"));
+    }
+
+    #[test]
+    fn test_is_test_name_suffix() {
+        assert!(is_test_name("login_test"));
+        assert!(is_test_name("create user test"));
+    }
+
+    #[test]
+    fn test_is_test_name_neither() {
+        assert!(!is_test_name("config"));
+        assert!(!is_test_name("setup"));
+        assert!(!is_test_name("login_flow"));
+    }
+
+    #[test]
+    fn test_is_test_name_case_insensitive() {
+        assert!(is_test_name("TEST"));
+        assert!(is_test_name("MYTEST"));
+    }
+
+    // ── TestResult ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_result_passed_is_true_on_success() {
+        let result = TestResult {
+            test_name: "my test".to_owned(),
+            test_path: PathBuf::from("/test.yaml"),
+            steps: vec![],
+            success: true,
+            duration_ms: 0,
+        };
+        assert!(result.passed());
+    }
+
+    #[test]
+    fn test_result_get_failure_message_returns_none_on_success() {
+        let result = TestResult {
+            test_name: "my test".to_owned(),
+            test_path: PathBuf::from("/test.yaml"),
+            steps: vec![],
+            success: true,
+            duration_ms: 0,
+        };
+        assert!(result.get_failure_message().is_none());
+    }
+
+    #[test]
+    fn test_result_get_failure_message_returns_last_step_message() {
+        let step = make_step_failure("expected 200, got 404");
+        let result = TestResult {
+            test_name: "my test".to_owned(),
+            test_path: PathBuf::from("/test.yaml"),
+            steps: vec![step],
+            success: false,
+            duration_ms: 0,
+        };
+        assert_eq!(result.get_failure_message(), Some("expected 200, got 404"));
+    }
+
+    #[test]
+    fn test_result_assertions_iterates_all_steps() {
+        let mut step1 = make_step_failure("bad status");
+        step1.assertion_results = vec![
+            AssertionResult { name: "status 200".to_owned(), passed: false, message: Some("bad status".to_owned()) },
+        ];
+        let mut step2 = make_step_failure("bad body");
+        step2.assertion_results = vec![
+            AssertionResult { name: "name".to_owned(), passed: true, message: None },
+            AssertionResult { name: "age".to_owned(), passed: false, message: Some("bad body".to_owned()) },
+        ];
+        let result = TestResult {
+            test_name: "t".to_owned(),
+            test_path: PathBuf::from("/t.yaml"),
+            steps: vec![step1, step2],
+            success: false,
+            duration_ms: 0,
+        };
+        assert_eq!(result.assertions().count(), 3);
+    }
+}
+
 impl Test {
     pub fn path(&self) -> &PathBuf {
         &self.path

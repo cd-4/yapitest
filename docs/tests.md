@@ -1,6 +1,6 @@
 # Tests
 
-A test file is any YAML file whose name starts or ends with `test` (e.g. `test-users.yaml`, `auth-tests.yaml`). Each key in the file whose name starts or ends with `test` (case-insensitive) is treated as a named test. All other keys are ignored.
+A test file is any YAML file whose name starts or ends with `test` (e.g. `test-users.yaml`, `auth-tests.yaml`). Each top-level key that starts or ends with `test` (case-insensitive) is treated as a named test. All other keys are ignored.
 
 ```yaml
 # test-users.yaml
@@ -34,7 +34,7 @@ test-name:
   setup:     step-set-name      # optional
   steps:                        # required
     - ...
-  cleanup:   step-set-name      # optional (Python); use `teardown` in Rust
+  teardown:  step-set-name      # optional
 ```
 
 ### `groups`
@@ -50,7 +50,7 @@ test-checkout:
 ```
 
 ```bash
-yapitest tests/ -g regression   # runs test-checkout (and any other test with "regression")
+yapitest tests/ -g regression   # runs test-checkout (and any other test tagged "regression")
 ```
 
 A test is included if it belongs to *any* of the specified groups.
@@ -87,17 +87,14 @@ test-create-post:
         API-Token: $setup.token    # "token" is an output of the create-user step-set
 ```
 
-### `cleanup` / `teardown`
+### `teardown`
 
-Names a step-set to run after the test's steps complete — even if the test failed. Use `cleanup` in the Python implementation and `teardown` in the Rust implementation.
-
-If setup fails, cleanup is **not** run. If any step fails, cleanup still runs.
+Names a step-set to run after the test's steps complete — even if the test failed. If setup fails, teardown is **not** run.
 
 ```yaml
 test-create-and-delete:
-  setup:   create-user
-  cleanup: delete-user     # Python
-  # teardown: delete-user  # Rust
+  setup:    create-user
+  teardown: delete-user
   steps:
     - path: /api/user
       assert:
@@ -106,7 +103,7 @@ test-create-and-delete:
 
 ### `steps`
 
-An ordered list of HTTP steps (or inline step-set references) that make up the test body. Steps run in order. If a step fails, the test stops and subsequent steps are marked as skipped.
+An ordered list of HTTP steps (or inline step-set references) that make up the test. Steps run in order. If a step fails, the test stops immediately.
 
 ---
 
@@ -116,7 +113,7 @@ Each entry in `steps` is either a **step object** or a **step-set reference**.
 
 ### Step-set references
 
-A plain string in the steps list runs a named step-set inline, as if its steps were inserted at that point. The step-set's outputs become accessible via `$<step-set-name>.<key>`.
+A plain string in the steps list runs a named step-set inline. The step-set's outputs are accessible via `$<step-set-name>.<key>`.
 
 ```yaml
 test-example:
@@ -129,11 +126,11 @@ test-example:
         status-code: 200
 ```
 
-### Step object fields
+### Step fields
 
 #### `id` *(optional)*
 
-A name for the step. Required if you want to reference this step's request data or response in later steps via `$<id>.response.<field>` or `$<id>.data.<field>`.
+A name for the step. Required if you want to reference this step's data or response in later steps.
 
 ```yaml
 - id: login
@@ -150,18 +147,16 @@ A name for the step. Required if you want to reference this step's request data 
 
 #### `path` *(required)*
 
-The URL path to request. Appended to the `urls.base` value from config. Path segments may contain variable references.
+The URL path for the request, appended to the `urls.base` value from config. Path segments may contain variable references. A leading `/` is added automatically if missing.
 
 ```yaml
-- path: /api/user/$setup.username      # variable in path segment
+- path: /api/user/$setup.username
 - path: /api/post/$create-post.response.post_id
 ```
 
-A leading `/` is added automatically if missing.
-
 #### `url` *(optional)*
 
-Override the base URL for this step. Can be a literal URL string or a `$urls.<name>` reference. If omitted, `urls.base` from the nearest config is used.
+Override the base URL for this step. Can be a literal URL or a `$urls.<name>` reference. If omitted, `urls.base` from the nearest config is used.
 
 ```yaml
 - url: http://admin.internal
@@ -176,12 +171,12 @@ Override the base URL for this step. Can be a literal URL string or a `$urls.<na
 HTTP method. Defaults to `GET` if omitted. Case-insensitive.
 
 ```yaml
-method: POST    # or GET, PUT, PATCH, DELETE, etc.
+method: POST    # GET, PUT, PATCH, DELETE, etc.
 ```
 
 #### `headers` *(optional)*
 
-A mapping of header names to values. Values may contain variable references.
+A map of header names to values. Values may be variable references.
 
 ```yaml
 headers:
@@ -192,12 +187,13 @@ headers:
 
 #### `data` *(optional)*
 
-The JSON body sent with the request. Nested maps and lists are supported. String values may contain variable references.
+The JSON body to send with the request. Nested maps and arrays are supported. String values may be variable references, and `re/<pattern>` strings generate random matching values.
 
 ```yaml
 data:
   username: alice
   role: admin
+  ref: "re/REF-[0-9]{6}"     # generates e.g. "REF-482910"
   settings:
     theme: dark
     notifications: true
@@ -207,7 +203,7 @@ You can also pass an entire step response or variable as the body:
 
 ```yaml
 data: $create-user.response       # entire response object
-data: $vars.default-payload       # a variable that holds an object
+data: $vars.default-payload       # a variable holding an object
 ```
 
 #### `assert` *(optional)*
@@ -218,11 +214,12 @@ Assertions to check against the HTTP response. See [Assertions](#assertions) bel
 
 ## Assertions
 
-The `assert` block can contain any combination of `status-code`, `body`, and `full`.
+The `assert` block can contain any combination of `status-code`, `body`, `full`, and `duration`.
 
 ```yaml
 assert:
   status-code: 201
+  duration: 500ms
   full: true
   body:
     id: +int
@@ -232,16 +229,14 @@ assert:
 
 ### `status-code`
 
-Asserts the HTTP response status code.
-
-**Exact match** — provide an integer:
+**Exact match:**
 
 ```yaml
 assert:
   status-code: 200
 ```
 
-**Wildcard match** — use `x` as a digit wildcard:
+**Wildcard match** — use `x` as a digit placeholder:
 
 ```yaml
 assert:
@@ -254,16 +249,9 @@ assert:
 
 ### `body`
 
-Asserts fields within the JSON response body. By default, unspecified fields in the response are ignored (see `full` to change this).
+Asserts fields within the JSON response body. By default, extra fields in the response are ignored — see [`full`](#full) to change this.
 
-The value for each key may be:
-
-- **An exact value** — the field must equal this exactly
-- **A type assertion** (`+type`) — the field must exist and be of the given type
-- **A variable reference** (`$...`) — the field must equal the resolved variable value
-- **A size assertion key** (`len(field)`) — assert the length of the named field
-
-#### Exact value match
+#### Exact value
 
 ```yaml
 assert:
@@ -274,8 +262,6 @@ assert:
 ```
 
 #### Nested fields
-
-Body assertions can traverse nested objects using YAML nesting:
 
 ```yaml
 assert:
@@ -289,16 +275,16 @@ assert:
 
 #### Type assertions
 
-Use `+type` to assert a field exists and is the right type, without checking its value.
+Use `+type` to assert a field exists and has the correct type, without checking its value.
 
-| Assertion | Accepted types |
-|-----------|---------------|
+| Assertion | Matches |
+|-----------|---------|
 | `+str` or `+string` | String |
 | `+int` or `+integer` | Integer |
-| `+float` or `+flt` | Float / decimal |
+| `+float` or `+flt` | Float |
 | `+bool` or `+boolean` | Boolean |
 | `+arr`, `+array`, or `+list` | Array |
-| `+dict`, `+dic`, `+dictionary`, or `+map` | Object / dictionary |
+| `+dict`, `+dic`, `+dictionary`, or `+map` | Object |
 
 ```yaml
 assert:
@@ -311,9 +297,9 @@ assert:
     active: +bool
 ```
 
-#### Variable references in assertions
+#### Variable references
 
-An expected value can be a variable reference. The field must equal the resolved value.
+An expected value can be a variable reference. The response field must equal the resolved value.
 
 ```yaml
 assert:
@@ -323,20 +309,33 @@ assert:
     post_id: $create-post.response.id
 ```
 
+#### Regex assertions
+
+Use `re/<pattern>` to assert that a string field matches a regular expression.
+
+```yaml
+assert:
+  body:
+    token: "re/[A-Za-z0-9]{32}"
+    slug: "re/[a-z0-9-]+"
+    created_at: "re/\\d{4}-\\d{2}-\\d{2}"
+```
+
+If the field is not a string, or if it does not match the pattern, the assertion fails with a descriptive message.
+
 #### Size assertions (`len`)
 
-Use `len(field)` as the key to assert the length of a string, array, or object field. The value is either an exact integer or a comparison string.
+Use `len(field)` as the key to assert the length of a string, array, or object.
 
 ```yaml
 assert:
   body:
     token: +str
-    len(token): 20          # exactly 20 characters
-    len(token): '<=20'      # at most 20 characters
-    len(token): '>=8'       # at least 8 characters
-    len(token): '>0'        # more than 0 characters
+    len(token): 32           # exactly 32 characters
+    len(token): '>=8'        # at least 8 characters
+    len(token): '<=64'       # at most 64 characters
     items: +arr
-    len(items): '>=1'       # at least one item
+    len(items): '>=1'        # at least one item
 ```
 
 Supported operators: `=`, `>=`, `<=`, `>`, `<`.
@@ -345,7 +344,7 @@ Supported operators: `=`, `>=`, `<=`, `>`, `<`.
 
 ### `full`
 
-When `full: true`, the assertion checks that the response body contains **exactly** the fields listed in `body` — no more, no less. Any field present in the response but absent from `body` will fail the test.
+When `full: true`, every field in the response body must be explicitly listed in `body`. Any field present in the response but missing from the assertion fails the test.
 
 ```yaml
 assert:
@@ -357,7 +356,20 @@ assert:
     created_at: +str
 ```
 
-This is useful for detecting when an API starts leaking fields it shouldn't (passwords, internal IDs, etc.) or when a response schema changes unexpectedly.
+Useful for detecting when an API starts leaking fields it shouldn't (passwords, internal IDs, etc.) or when a response schema changes unexpectedly.
+
+---
+
+### `duration`
+
+Asserts that the HTTP request completed within a time limit. Accepts a bare integer (milliseconds), or a string with a `ms` or `s` suffix.
+
+```yaml
+assert:
+  duration: 500       # under 500ms
+  duration: 500ms     # same
+  duration: 2s        # under 2 seconds
+```
 
 ---
 
@@ -367,7 +379,7 @@ This is useful for detecting when an API starts leaking fields it shouldn't (pas
 # test-posts.yaml
 
 test-create-and-get-post:
-  setup: create-user          # defined in yapitest-config.yaml
+  setup: create-user
   steps:
     - id: new-post
       path: /api/post/create
@@ -377,15 +389,17 @@ test-create-and-get-post:
       data:
         title: "Hello World"
         body: "My first post"
+        ref: "re/REF-[0-9]{6}"
       assert:
         status-code: 201
+        duration: 1s
         body:
           post_id: +int
 
     - path: /api/post/$new-post.response.post_id
-      method: GET
       assert:
         status-code: 200
+        duration: 500ms
         full: true
         body:
           id: +int
@@ -393,12 +407,12 @@ test-create-and-get-post:
           body: "My first post"
           user_id: +int
 
-test-delete-needs-auth:
+test-delete-requires-auth:
   steps:
     - path: /api/post/1
       method: DELETE
       assert:
-        status-code: 403
+        status-code: 4xx
 
 test-pagination:
   steps:

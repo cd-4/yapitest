@@ -141,6 +141,71 @@ fn is_root_dir(path: &PathBuf) -> bool {
     path.is_dir() && path.join(".git").exists()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── is_yaml ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_is_yaml_yaml_extension() {
+        assert!(is_yaml(&PathBuf::from("test.yaml")));
+    }
+
+    #[test]
+    fn test_is_yaml_yml_extension() {
+        assert!(is_yaml(&PathBuf::from("test.yml")));
+    }
+
+    #[test]
+    fn test_is_yaml_json_extension() {
+        assert!(!is_yaml(&PathBuf::from("test.json")));
+    }
+
+    #[test]
+    fn test_is_yaml_no_extension() {
+        assert!(!is_yaml(&PathBuf::from("testfile")));
+    }
+
+    // ── is_test_file ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_is_test_file_test_prefix_yaml() {
+        assert!(is_test_file(&PathBuf::from("test-login.yaml")));
+    }
+
+    #[test]
+    fn test_is_test_file_test_prefix_yml() {
+        assert!(is_test_file(&PathBuf::from("test-login.yml")));
+    }
+
+    #[test]
+    fn test_is_test_file_test_suffix() {
+        assert!(is_test_file(&PathBuf::from("login-test.yaml")));
+    }
+
+    #[test]
+    fn test_is_test_file_config_yaml_excluded() {
+        assert!(!is_test_file(&PathBuf::from("config.yaml")));
+    }
+
+    #[test]
+    fn test_is_test_file_yapitest_config_excluded() {
+        assert!(!is_test_file(&PathBuf::from("yapitest-config.yaml")));
+    }
+
+    #[test]
+    fn test_is_test_file_non_yaml_excluded() {
+        assert!(!is_test_file(&PathBuf::from("test-something.json")));
+    }
+
+    #[test]
+    fn test_is_test_file_case_insensitive_stem() {
+        assert!(is_test_file(&PathBuf::from("TEST-login.yaml")));
+        assert!(is_test_file(&PathBuf::from("login-TEST.yaml")));
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(version, about = "Yapitest is a simple API testing platform")]
 struct Args {

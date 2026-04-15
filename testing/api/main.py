@@ -140,6 +140,8 @@ def user():
         data = request.get_json()
         old_name = user.name
         new_name = data["username"]
+        print("______")
+        print(new_name)
         del USERS_BY_USERNAME[old_name]
         user.name = new_name
         USERS_BY_USERNAME[new_name] = user

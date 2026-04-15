@@ -7,8 +7,8 @@ step-sets:
         path: /api/user/create
         method: POST
         data:
-          username: setup-test-user
-          password: setup-pass-123!
+          username: $vars.sample-user
+          password: $vars.sample-password
     output:
       username: $create-user.data.username
       password: $create-user.data.password

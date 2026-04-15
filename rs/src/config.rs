@@ -94,10 +94,13 @@ impl TestStepGroup {
 
                 let step_id = match output_sections.first() {
                     Some(v) => *v,
-                    None => return Err(anyhow!(
-                        "output '{}': '{}' is not a valid step reference — expected '$<step-id>.<field>'",
-                        output_key, output_value
-                    )),
+                    None => {
+                        return Err(anyhow!(
+                            "output '{}': '{}' is not a valid step reference — expected '$<step-id>.<field>'",
+                            output_key,
+                            output_value
+                        ));
+                    }
                 };
 
                 if let Some(step) = local_steps.get(step_id) {
@@ -112,13 +115,16 @@ impl TestStepGroup {
                         }
                         return Err(anyhow!(
                             "output '{}': field '{}' not found in step '{}'",
-                            output_key, field_key, step_id,
+                            output_key,
+                            field_key,
+                            step_id,
                         ));
                     }
                 } else {
                     return Err(anyhow!(
                         "output '{}' references step '{}', but no step with that id was found",
-                        output_key, step_id
+                        output_key,
+                        step_id
                     ));
                 }
             }
@@ -322,6 +328,124 @@ lazy_static! {
     static ref GROUP_TEST_RESULTS: DashMap<String, TestStepResult> = DashMap::new();
     static ref GROUP_INIT: DashMap<String, Arc<tokio::sync::Mutex<()>>> = DashMap::new();
     static ref GROUP_ONCE: DashMap<String, Arc<OnceCell<TestStepResult>>> = DashMap::new();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn test_path() -> PathBuf {
+        PathBuf::from("/test/config.yaml")
+    }
+
+    fn make_config(yaml: &str) -> ConfigData {
+        let val: Value = serde_yaml::from_str(yaml).unwrap();
+        ConfigData::from_val(val, &test_path()).unwrap()
+    }
+
+    // ── get_string_value ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_string_value_var() {
+        let cfg = make_config("vars:\n  username: alice");
+        assert_eq!(cfg.get_string_value("vars.username").unwrap(), "alice");
+    }
+
+    #[test]
+    fn test_get_string_value_url() {
+        let cfg = make_config("urls:\n  base: https://example.com");
+        assert_eq!(cfg.get_string_value("urls.base").unwrap(), "https://example.com");
+    }
+
+    #[test]
+    fn test_get_string_value_missing_key_errors() {
+        let cfg = make_config("vars:\n  username: alice");
+        assert!(cfg.get_string_value("vars.nonexistent").is_err());
+    }
+
+    #[test]
+    fn test_get_string_value_walks_parent_chain() {
+        let parent = make_config("vars:\n  parent_var: from_parent");
+        let mut child = make_config("vars:\n  child_var: from_child");
+        child.set_parent(Arc::new(RwLock::new(parent)));
+
+        assert_eq!(child.get_string_value("vars.child_var").unwrap(), "from_child");
+        assert_eq!(child.get_string_value("vars.parent_var").unwrap(), "from_parent");
+    }
+
+    #[test]
+    fn test_get_string_value_chained_url_reference() {
+        let cfg = make_config("urls:\n  base: https://example.com\n  api: \"$urls.base\"");
+        assert_eq!(cfg.get_string_value("urls.api").unwrap(), "https://example.com");
+    }
+
+    // ── create_variables (via from_val) ──────────────────────────────────────
+
+    #[test]
+    fn test_variable_env_mapping_reads_env() {
+        // SAFETY: single-threaded test process; no concurrent env access
+        unsafe { std::env::set_var("YAPITEST_TEST_TOKEN", "secret_env_value") };
+        let cfg = make_config("vars:\n  token:\n    env: YAPITEST_TEST_TOKEN");
+        assert_eq!(cfg.get_string_value("vars.token").unwrap(), "secret_env_value");
+        unsafe { std::env::remove_var("YAPITEST_TEST_TOKEN") };
+    }
+
+    #[test]
+    fn test_variable_env_mapping_falls_back_to_default() {
+        unsafe { std::env::remove_var("YAPITEST_TEST_UNSET_VAR") };
+        let cfg = make_config(
+            "vars:\n  token:\n    env: YAPITEST_TEST_UNSET_VAR\n    default: fallback",
+        );
+        assert_eq!(cfg.get_string_value("vars.token").unwrap(), "fallback");
+    }
+
+    #[test]
+    fn test_variable_env_mapping_env_overrides_default() {
+        unsafe { std::env::set_var("YAPITEST_TEST_BOTH", "env_wins") };
+        let cfg = make_config(
+            "vars:\n  token:\n    env: YAPITEST_TEST_BOTH\n    default: default_val",
+        );
+        assert_eq!(cfg.get_string_value("vars.token").unwrap(), "env_wins");
+        unsafe { std::env::remove_var("YAPITEST_TEST_BOTH") };
+    }
+
+    #[test]
+    fn test_variable_env_mapping_missing_env_no_default_errors() {
+        unsafe { std::env::remove_var("YAPITEST_TEST_MISSING") };
+        let val: Value =
+            serde_yaml::from_str("vars:\n  token:\n    env: YAPITEST_TEST_MISSING")
+                .unwrap();
+        let result = ConfigData::from_val(val, &test_path());
+        assert!(result.is_err());
+        let msg = result.err().unwrap().to_string();
+        assert!(msg.contains("token"), "{}", msg);
+    }
+
+    // ── get_step_group ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_step_group_not_found_errors() {
+        let cfg = make_config("vars:\n  x: y");
+        assert!(cfg.get_step_group("nonexistent").is_err());
+    }
+
+    #[test]
+    fn test_get_step_group_found_directly() {
+        let yaml = "step-sets:\n  my-setup:\n    once: false\n    output: {}\n    steps: []";
+        let cfg = make_config(yaml);
+        assert!(cfg.get_step_group("my-setup").is_ok());
+    }
+
+    #[test]
+    fn test_get_step_group_found_in_parent() {
+        let parent_yaml =
+            "step-sets:\n  shared-setup:\n    once: false\n    output: {}\n    steps: []";
+        let parent = make_config(parent_yaml);
+        let mut child = make_config("vars:\n  x: y");
+        child.set_parent(Arc::new(RwLock::new(parent)));
+        assert!(child.get_step_group("shared-setup").is_ok());
+    }
 }
 
 #[async_trait]
