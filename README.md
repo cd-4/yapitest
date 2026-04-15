@@ -5,7 +5,7 @@
 [![Crates.io Version](https://img.shields.io/crates/v/yapitest)](https://crates.io/crates/yapitest)
 [![Crates.io Downloads](https://img.shields.io/crates/d/yapitest)](https://crates.io/crates/yapitest)
 [![License: MIT](https://img.shields.io/crates/l/yapitest)](LICENSE)
-[![Docs](https://img.shields.io/badge/docs-8A2BE2)](DOCS)
+[![Docs](https://img.shields.io/badge/docs-8A2BE2)](https://cd-4.github.io/yapitest)
 
 # yapitest
 
