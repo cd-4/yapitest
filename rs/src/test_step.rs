@@ -1065,6 +1065,62 @@ mod tests {
         assertions
     }
 
+    fn make_config(yaml: &str) -> Option<Arc<RwLock<ConfigData>>> {
+        use std::path::PathBuf;
+        let val: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+        let config = ConfigData::from_val(val, &PathBuf::from("/test/config.yaml")).unwrap();
+        Some(Arc::new(RwLock::new(config)))
+    }
+
+    /// A step result with response and request data but no output_data (regular HTTP step).
+    fn make_step_result(id: &str, response: Value, request: Value) -> TestStepResult {
+        TestStepResult {
+            step_id: Some(id.to_owned()),
+            response_data: Some(response),
+            request_data: Some(request),
+            output_data: None,
+            status: TestStepFailureReason::NoFailure,
+            failure_message: None,
+            assertion_results: vec![],
+        }
+    }
+
+    fn run_compare_objects(
+        observed: Value,
+        expected: Value,
+        full: bool,
+    ) -> Vec<AssertionResult> {
+        let mut assertions = vec![];
+        if let (Some(obs), Some(exp)) = (observed.as_object(), expected.as_object()) {
+            compare_data_objects(
+                obs,
+                exp,
+                full,
+                "",
+                &no_config(),
+                &no_prior_steps(),
+                &mut assertions,
+            );
+        }
+        assertions
+    }
+
+    fn run_compare_arrays(observed: Value, expected: Value) -> Vec<AssertionResult> {
+        let mut assertions = vec![];
+        if let (Some(obs), Some(exp)) = (observed.as_array(), expected.as_array()) {
+            compare_array_objects(
+                obs,
+                exp,
+                false,
+                "",
+                &no_config(),
+                &no_prior_steps(),
+                &mut assertions,
+            );
+        }
+        assertions
+    }
+
     // ── Generation tests ─────────────────────────────────────────────────────
 
     #[test]
@@ -1205,5 +1261,666 @@ mod tests {
     fn test_parse_duration_float_number_rejected() {
         let result = parse_duration(&serde_json::json!(1.5_f64));
         assert!(result.is_err());
+    }
+
+    // ── get_value_length ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_value_length_string() {
+        assert_eq!(get_value_length(&json!("hello")).unwrap(), 5);
+    }
+
+    #[test]
+    fn test_get_value_length_empty_string() {
+        assert_eq!(get_value_length(&json!("")).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_get_value_length_array() {
+        assert_eq!(get_value_length(&json!([1, 2, 3])).unwrap(), 3);
+    }
+
+    #[test]
+    fn test_get_value_length_object() {
+        assert_eq!(get_value_length(&json!({"a": 1, "b": 2})).unwrap(), 2);
+    }
+
+    #[test]
+    fn test_get_value_length_number_errors() {
+        let err = get_value_length(&json!(42)).unwrap_err();
+        assert!(err.to_string().contains("cannot check length"), "{}", err);
+    }
+
+    #[test]
+    fn test_get_value_length_bool_errors() {
+        assert!(get_value_length(&json!(true)).is_err());
+    }
+
+    #[test]
+    fn test_get_value_length_null_errors() {
+        assert!(get_value_length(&json!(null)).is_err());
+    }
+
+    // ── check_size ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_check_size_equal_pass() {
+        assert!(check_size(&json!("hello"), "5").unwrap());
+    }
+
+    #[test]
+    fn test_check_size_equal_fail() {
+        assert!(!check_size(&json!("hello"), "4").unwrap());
+    }
+
+    #[test]
+    fn test_check_size_gt_pass() {
+        assert!(check_size(&json!([1, 2, 3]), ">2").unwrap());
+    }
+
+    #[test]
+    fn test_check_size_gt_fail() {
+        assert!(!check_size(&json!([1, 2]), ">2").unwrap());
+    }
+
+    #[test]
+    fn test_check_size_gte_pass() {
+        assert!(check_size(&json!([1, 2]), ">=2").unwrap());
+        assert!(check_size(&json!([1, 2, 3]), ">=2").unwrap());
+    }
+
+    #[test]
+    fn test_check_size_gte_fail() {
+        assert!(!check_size(&json!([1]), ">=2").unwrap());
+    }
+
+    #[test]
+    fn test_check_size_lt_pass() {
+        assert!(check_size(&json!([1]), "<2").unwrap());
+    }
+
+    #[test]
+    fn test_check_size_lt_fail() {
+        assert!(!check_size(&json!([1, 2]), "<2").unwrap());
+    }
+
+    #[test]
+    fn test_check_size_lte_pass() {
+        assert!(check_size(&json!([1, 2]), "<=2").unwrap());
+    }
+
+    #[test]
+    fn test_check_size_lte_fail() {
+        assert!(!check_size(&json!([1, 2, 3]), "<=2").unwrap());
+    }
+
+    #[test]
+    fn test_check_size_invalid_comparison_errors() {
+        let err = check_size(&json!([1]), "not_valid").unwrap_err();
+        assert!(err.to_string().contains("invalid size comparison"), "{}", err);
+    }
+
+    // ── clean_path ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_clean_path_static() {
+        let result = clean_path("users/me", &no_config(), &no_prior_steps()).unwrap();
+        assert_eq!(result, "/users/me");
+    }
+
+    #[test]
+    fn test_clean_path_string_variable_from_prior_step() {
+        let mut prior = no_prior_steps();
+        prior.insert(
+            "login".to_owned(),
+            make_step_result("login", json!({"token": "abc123"}), json!(null)),
+        );
+        let result =
+            clean_path("auth/$login.response.token/verify", &no_config(), &prior).unwrap();
+        assert_eq!(result, "/auth/abc123/verify");
+    }
+
+    #[test]
+    fn test_clean_path_integer_variable_from_prior_step() {
+        let mut prior = no_prior_steps();
+        prior.insert(
+            "create".to_owned(),
+            make_step_result("create", json!({"id": 42}), json!(null)),
+        );
+        let result = clean_path("items/$create.response.id", &no_config(), &prior).unwrap();
+        assert_eq!(result, "/items/42");
+    }
+
+    #[test]
+    fn test_clean_path_missing_variable_errors() {
+        let result = clean_path("users/$nonexistent.response.id", &no_config(), &no_prior_steps());
+        assert!(result.is_err());
+    }
+
+    // ── clean_headers ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_clean_headers_static() {
+        let mut headers = HashMap::new();
+        headers.insert("content-type".to_owned(), "application/json".to_owned());
+        let result = clean_headers(&headers, &no_config(), &no_prior_steps()).unwrap();
+        assert_eq!(result.get("content-type").unwrap(), "application/json");
+    }
+
+    #[test]
+    fn test_clean_headers_variable_from_config() {
+        let cfg = make_config("vars:\n  my_token: Bearer xyz789");
+        let mut headers = HashMap::new();
+        headers.insert("authorization".to_owned(), "$vars.my_token".to_owned());
+        let result = clean_headers(&headers, &cfg, &no_prior_steps()).unwrap();
+        assert_eq!(result.get("authorization").unwrap(), "Bearer xyz789");
+    }
+
+    #[test]
+    fn test_clean_headers_missing_variable_errors() {
+        let mut headers = HashMap::new();
+        headers.insert("authorization".to_owned(), "$vars.nonexistent".to_owned());
+        assert!(clean_headers(&headers, &no_config(), &no_prior_steps()).is_err());
+    }
+
+    // ── clean_request_data (extended) ────────────────────────────────────────
+
+    #[test]
+    fn test_clean_request_data_passthrough_null() {
+        let result =
+            clean_request_data(&json!(null), &no_config(), &no_prior_steps()).unwrap();
+        assert_eq!(result, json!(null));
+    }
+
+    #[test]
+    fn test_clean_request_data_passthrough_number() {
+        let result =
+            clean_request_data(&json!(42), &no_config(), &no_prior_steps()).unwrap();
+        assert_eq!(result, json!(42));
+    }
+
+    #[test]
+    fn test_clean_request_data_passthrough_static_string() {
+        let result =
+            clean_request_data(&json!("static"), &no_config(), &no_prior_steps()).unwrap();
+        assert_eq!(result, json!("static"));
+    }
+
+    #[test]
+    fn test_clean_request_data_nested_object() {
+        let input = json!({"a": "one", "b": {"c": "two"}});
+        let result = clean_request_data(&input, &no_config(), &no_prior_steps()).unwrap();
+        assert_eq!(result, json!({"a": "one", "b": {"c": "two"}}));
+    }
+
+    #[test]
+    fn test_clean_request_data_array() {
+        let input = json!(["a", "b", "c"]);
+        let result = clean_request_data(&input, &no_config(), &no_prior_steps()).unwrap();
+        assert_eq!(result, json!(["a", "b", "c"]));
+    }
+
+    #[test]
+    fn test_clean_request_data_variable_substitution() {
+        let cfg = make_config("vars:\n  username: alice");
+        let input = json!({"user": "$vars.username"});
+        let result = clean_request_data(&input, &cfg, &no_prior_steps()).unwrap();
+        assert_eq!(result, json!({"user": "alice"}));
+    }
+
+    // ── get_variable ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_variable_non_dollar_passthrough() {
+        let result =
+            get_variable("literal", &no_config(), &no_prior_steps()).unwrap();
+        assert_eq!(result, json!("literal"));
+    }
+
+    #[test]
+    fn test_get_variable_config_var() {
+        let cfg = make_config("vars:\n  username: testuser");
+        let result = get_variable("$vars.username", &cfg, &no_prior_steps()).unwrap();
+        assert_eq!(result, json!("testuser"));
+    }
+
+    #[test]
+    fn test_get_variable_config_url() {
+        let cfg = make_config("urls:\n  base: https://example.com");
+        let result = get_variable("$urls.base", &cfg, &no_prior_steps()).unwrap();
+        assert_eq!(result, json!("https://example.com"));
+    }
+
+    #[test]
+    fn test_get_variable_from_prior_step_response() {
+        let mut prior = no_prior_steps();
+        prior.insert(
+            "login".to_owned(),
+            make_step_result("login", json!({"token": "xyz789"}), json!(null)),
+        );
+        let result = get_variable("$login.response.token", &no_config(), &prior).unwrap();
+        assert_eq!(result, json!("xyz789"));
+    }
+
+    #[test]
+    fn test_get_variable_missing_step_errors() {
+        let result =
+            get_variable("$nonexistent.response.field", &no_config(), &no_prior_steps());
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("nonexistent"), "expected step id in error, got: {}", msg);
+    }
+
+    #[test]
+    fn test_get_variable_regex_from_config_var() {
+        let cfg = make_config("vars:\n  my_id: \"re/[0-9]{6}\"");
+        let result = get_variable("$vars.my_id", &cfg, &no_prior_steps()).unwrap();
+        let generated = result.as_str().unwrap();
+        let re = Regex::new("[0-9]{6}").unwrap();
+        assert!(
+            re.is_match(generated),
+            "generated '{}' should match [0-9]{{6}}",
+            generated
+        );
+    }
+
+    // ── compare_primitive_values (extended) ──────────────────────────────────
+
+    #[test]
+    fn test_compare_primitive_type_str_pass() {
+        let r = run_assert(json!("hello"), json!("+str"));
+        assert!(r[0].passed);
+    }
+
+    #[test]
+    fn test_compare_primitive_type_str_fail() {
+        let r = run_assert(json!(42), json!("+str"));
+        assert!(!r[0].passed);
+        assert!(r[0].message.as_deref().unwrap().contains("a string"));
+    }
+
+    #[test]
+    fn test_compare_primitive_type_string_synonym() {
+        let r = run_assert(json!("hello"), json!("+string"));
+        assert!(r[0].passed);
+    }
+
+    #[test]
+    fn test_compare_primitive_type_int_pass() {
+        let r = run_assert(json!(42), json!("+int"));
+        assert!(r[0].passed);
+    }
+
+    #[test]
+    fn test_compare_primitive_type_integer_synonym() {
+        let r = run_assert(json!(42), json!("+integer"));
+        assert!(r[0].passed);
+    }
+
+    #[test]
+    fn test_compare_primitive_type_bool_pass() {
+        let r = run_assert(json!(true), json!("+bool"));
+        assert!(r[0].passed);
+    }
+
+    #[test]
+    fn test_compare_primitive_type_bool_fail() {
+        let r = run_assert(json!("yes"), json!("+bool"));
+        assert!(!r[0].passed);
+    }
+
+    #[test]
+    fn test_compare_primitive_type_arr_pass() {
+        let r = run_assert(json!([1, 2]), json!("+arr"));
+        assert!(r[0].passed);
+    }
+
+    #[test]
+    fn test_compare_primitive_type_arr_fail() {
+        let r = run_assert(json!("not_an_array"), json!("+arr"));
+        assert!(!r[0].passed);
+    }
+
+    #[test]
+    fn test_compare_primitive_type_dict_pass() {
+        let r = run_assert(json!({"k": "v"}), json!("+dict"));
+        assert!(r[0].passed);
+    }
+
+    #[test]
+    fn test_compare_primitive_type_float_pass() {
+        let r = run_assert(json!(3.14), json!("+float"));
+        assert!(r[0].passed);
+    }
+
+    #[test]
+    fn test_compare_primitive_exact_string_match() {
+        let r = run_assert(json!("hello"), json!("hello"));
+        assert!(r[0].passed);
+    }
+
+    #[test]
+    fn test_compare_primitive_exact_string_mismatch() {
+        let r = run_assert(json!("hello"), json!("world"));
+        assert!(!r[0].passed);
+        assert!(r[0].message.as_deref().unwrap().contains("expected"));
+    }
+
+    #[test]
+    fn test_compare_primitive_exact_int_match() {
+        let r = run_assert(json!(42), json!(42));
+        assert!(r[0].passed);
+    }
+
+    #[test]
+    fn test_compare_primitive_exact_bool_match() {
+        let r = run_assert(json!(false), json!(false));
+        assert!(r[0].passed);
+    }
+
+    #[test]
+    fn test_compare_primitive_type_mismatch() {
+        let r = run_assert(json!("hello"), json!(42));
+        assert!(!r[0].passed);
+        let msg = r[0].message.as_deref().unwrap();
+        assert!(msg.contains("expected"), "{}", msg);
+    }
+
+    #[test]
+    fn test_compare_primitive_variable_reference_match() {
+        let mut prior = no_prior_steps();
+        prior.insert(
+            "step1".to_owned(),
+            make_step_result("step1", json!({"id": 42}), json!(null)),
+        );
+        let mut assertions = vec![];
+        compare_primitive_values(
+            &json!(42),
+            &json!("$step1.response.id"),
+            "field",
+            &no_config(),
+            &prior,
+            &mut assertions,
+        );
+        assert!(assertions[0].passed);
+    }
+
+    #[test]
+    fn test_compare_primitive_variable_reference_mismatch() {
+        let mut prior = no_prior_steps();
+        prior.insert(
+            "step1".to_owned(),
+            make_step_result("step1", json!({"id": 99}), json!(null)),
+        );
+        let mut assertions = vec![];
+        compare_primitive_values(
+            &json!(42),
+            &json!("$step1.response.id"),
+            "field",
+            &no_config(),
+            &prior,
+            &mut assertions,
+        );
+        assert!(!assertions[0].passed);
+    }
+
+    // ── compare_data_objects ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_compare_objects_all_matching() {
+        let assertions = run_compare_objects(
+            json!({"name": "Alice", "age": 30}),
+            json!({"name": "Alice", "age": 30}),
+            false,
+        );
+        assert!(assertions.iter().all(|a| a.passed), "{:?}", assertions);
+    }
+
+    #[test]
+    fn test_compare_objects_missing_expected_field() {
+        let assertions = run_compare_objects(
+            json!({"name": "Alice"}),
+            json!({"name": "Alice", "age": 30}),
+            false,
+        );
+        let failed: Vec<_> = assertions.iter().filter(|a| !a.passed).collect();
+        assert_eq!(failed.len(), 1);
+        assert!(
+            failed[0].message.as_deref().unwrap().contains("age"),
+            "{:?}",
+            failed[0].message
+        );
+    }
+
+    #[test]
+    fn test_compare_objects_full_mode_flags_extra_field() {
+        let assertions = run_compare_objects(
+            json!({"name": "Alice", "extra": "surprise"}),
+            json!({"name": "Alice"}),
+            true,
+        );
+        let failed: Vec<_> = assertions.iter().filter(|a| !a.passed).collect();
+        assert_eq!(failed.len(), 1);
+        assert!(
+            failed[0].message.as_deref().unwrap().contains("extra"),
+            "{:?}",
+            failed[0].message
+        );
+    }
+
+    #[test]
+    fn test_compare_objects_non_full_mode_ignores_extra_field() {
+        let assertions = run_compare_objects(
+            json!({"name": "Alice", "extra": "surprise"}),
+            json!({"name": "Alice"}),
+            false,
+        );
+        assert!(assertions.iter().all(|a| a.passed), "{:?}", assertions);
+    }
+
+    #[test]
+    fn test_compare_objects_len_assertion_pass() {
+        let assertions = run_compare_objects(
+            json!({"items": [1, 2, 3]}),
+            json!({"len(items)": ">=2"}),
+            false,
+        );
+        assert!(assertions.iter().all(|a| a.passed), "{:?}", assertions);
+    }
+
+    #[test]
+    fn test_compare_objects_len_assertion_fail() {
+        let assertions = run_compare_objects(
+            json!({"items": [1]}),
+            json!({"len(items)": ">=2"}),
+            false,
+        );
+        let failed: Vec<_> = assertions.iter().filter(|a| !a.passed).collect();
+        assert!(!failed.is_empty(), "expected a failure");
+    }
+
+    // ── compare_array_objects ────────────────────────────────────────────────
+
+    #[test]
+    fn test_compare_arrays_matching() {
+        let assertions = run_compare_arrays(json!([1, 2, 3]), json!([1, 2, 3]));
+        assert!(assertions.iter().all(|a| a.passed), "{:?}", assertions);
+    }
+
+    #[test]
+    fn test_compare_arrays_length_mismatch() {
+        let assertions = run_compare_arrays(json!([1, 2]), json!([1, 2, 3]));
+        let failed: Vec<_> = assertions.iter().filter(|a| !a.passed).collect();
+        assert!(!failed.is_empty());
+        assert!(
+            failed[0].message.as_deref().unwrap().contains("expected 3 item(s), got 2"),
+            "{:?}",
+            failed[0].message
+        );
+    }
+
+    #[test]
+    fn test_compare_arrays_element_mismatch() {
+        let assertions = run_compare_arrays(json!(["a", "b"]), json!(["a", "c"]));
+        assert!(assertions.iter().any(|a| !a.passed));
+    }
+
+    // ── compare_data (top-level) ─────────────────────────────────────────────
+
+    #[test]
+    fn test_compare_data_nested_object_pass() {
+        let mut assertions = vec![];
+        let passed = compare_data(
+            &json!({"user": {"name": "Alice", "age": 30}}),
+            &json!({"user": {"name": "Alice"}}),
+            &no_config(),
+            &no_prior_steps(),
+            false,
+            &mut assertions,
+        );
+        assert!(passed, "{:?}", assertions);
+    }
+
+    #[test]
+    fn test_compare_data_nested_object_fail() {
+        let mut assertions = vec![];
+        let passed = compare_data(
+            &json!({"user": {"name": "Bob"}}),
+            &json!({"user": {"name": "Alice"}}),
+            &no_config(),
+            &no_prior_steps(),
+            false,
+            &mut assertions,
+        );
+        assert!(!passed);
+    }
+
+    // ── TestStep::check_status_code ──────────────────────────────────────────
+
+    #[test]
+    fn test_check_status_code_exact_match() {
+        assert!(TestStep::check_status_code(&json!(200u64), 200));
+    }
+
+    #[test]
+    fn test_check_status_code_exact_mismatch() {
+        assert!(!TestStep::check_status_code(&json!(200u64), 404));
+    }
+
+    #[test]
+    fn test_check_status_code_wildcard_matches() {
+        assert!(TestStep::check_status_code(&json!("4xx"), 404));
+        assert!(TestStep::check_status_code(&json!("4xx"), 400));
+        assert!(TestStep::check_status_code(&json!("20x"), 200));
+        assert!(TestStep::check_status_code(&json!("20x"), 201));
+    }
+
+    #[test]
+    fn test_check_status_code_wildcard_mismatch() {
+        assert!(!TestStep::check_status_code(&json!("4xx"), 200));
+        assert!(!TestStep::check_status_code(&json!("20x"), 404));
+    }
+
+    // ── TestStepResult::get_field ────────────────────────────────────────────
+
+    #[test]
+    fn test_get_field_response_namespace() {
+        let result = make_step_result("s", json!({"id": 42}), json!(null));
+        assert_eq!(result.get_field("response.id").unwrap(), Some(json!(42)));
+    }
+
+    #[test]
+    fn test_get_field_request_namespace() {
+        let result = make_step_result("s", json!(null), json!({"body": "hello"}));
+        assert_eq!(result.get_field("request.body").unwrap(), Some(json!("hello")));
+    }
+
+    #[test]
+    fn test_get_field_data_namespace_alias() {
+        let result = make_step_result("s", json!(null), json!({"key": "val"}));
+        assert_eq!(result.get_field("data.key").unwrap(), Some(json!("val")));
+    }
+
+    #[test]
+    fn test_get_field_nested_response_field() {
+        let result =
+            make_step_result("s", json!({"user": {"name": "Alice"}}), json!(null));
+        assert_eq!(
+            result.get_field("response.user.name").unwrap(),
+            Some(json!("Alice"))
+        );
+    }
+
+    #[test]
+    fn test_get_field_missing_key_returns_none() {
+        let result = make_step_result("s", json!({"id": 42}), json!(null));
+        assert_eq!(result.get_field("response.nonexistent").unwrap(), None);
+    }
+
+    #[test]
+    fn test_get_field_invalid_namespace_errors() {
+        let result = make_step_result("s", json!({"id": 42}), json!(null));
+        assert!(result.get_field("invalid.field").is_err());
+    }
+
+    #[test]
+    fn test_get_field_output_data_bypasses_namespace_routing() {
+        let result = TestStepResult {
+            step_id: None,
+            response_data: None,
+            request_data: None,
+            output_data: Some(json!({"token": "abc"})),
+            status: TestStepFailureReason::NoFailure,
+            failure_message: None,
+            assertion_results: vec![],
+        };
+        assert_eq!(result.get_field("token").unwrap(), Some(json!("abc")));
+    }
+
+    // ── push_duration_assertion ──────────────────────────────────────────────
+
+    #[test]
+    fn test_push_duration_assertion_skipped_when_no_expected() {
+        let mut assertions = vec![];
+        push_duration_assertion(&mut assertions, None, std::time::Duration::from_millis(100));
+        assert!(assertions.is_empty());
+    }
+
+    #[test]
+    fn test_push_duration_assertion_passes_when_under_limit() {
+        let mut assertions = vec![];
+        push_duration_assertion(
+            &mut assertions,
+            Some(&json!(500u64)),
+            std::time::Duration::from_millis(100),
+        );
+        assert_eq!(assertions.len(), 1);
+        assert!(assertions[0].passed, "{:?}", assertions[0].message);
+    }
+
+    #[test]
+    fn test_push_duration_assertion_fails_when_over_limit() {
+        let mut assertions = vec![];
+        push_duration_assertion(
+            &mut assertions,
+            Some(&json!(100u64)),
+            std::time::Duration::from_millis(500),
+        );
+        assert_eq!(assertions.len(), 1);
+        assert!(!assertions[0].passed);
+        let msg = assertions[0].message.as_deref().unwrap();
+        assert!(msg.contains("expected less than"), "{}", msg);
+    }
+
+    #[test]
+    fn test_push_duration_assertion_invalid_format_fails() {
+        let mut assertions = vec![];
+        push_duration_assertion(
+            &mut assertions,
+            Some(&json!("not_a_duration")),
+            std::time::Duration::from_millis(100),
+        );
+        assert_eq!(assertions.len(), 1);
+        assert!(!assertions[0].passed);
     }
 }
