@@ -49,6 +49,9 @@ pub struct TestStepSpec {
     headers: Option<HashMap<String, String>>,
     data: Option<Value>,
     assert: Option<TestStepAssertionSpec>,
+    wait_before: Option<Value>,
+    wait_after: Option<Value>,
+    retry: Option<u32>,
 }
 
 pub struct TestStep {
@@ -62,6 +65,9 @@ pub struct TestStep {
     expected_status_code: Option<Value>,
     allow_missing_fields: bool,
     expected_duration: Option<Value>,
+    wait_before: Option<Value>,
+    wait_after: Option<Value>,
+    retry: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -876,6 +882,9 @@ impl TestStep {
             expected_status_code,
             allow_missing_fields: !full_data,
             expected_duration,
+            wait_before: spec.wait_before,
+            wait_after: spec.wait_after,
+            retry: spec.retry.unwrap_or(0),
         }
     }
 }
@@ -1922,5 +1931,83 @@ mod tests {
         );
         assert_eq!(assertions.len(), 1);
         assert!(!assertions[0].passed);
+    }
+
+    // ── wait-before / wait-after / retry deserialization ─────────────────────
+
+    #[test]
+    fn test_spec_wait_before_bare_integer() {
+        let yaml = "path: /api/test\nwait-before: 500";
+        let spec: TestStepSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(spec.wait_before, Some(json!(500)));
+    }
+
+    #[test]
+    fn test_spec_wait_before_ms_string() {
+        let yaml = "path: /api/test\nwait-before: \"500ms\"";
+        let spec: TestStepSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(spec.wait_before, Some(json!("500ms")));
+    }
+
+    #[test]
+    fn test_spec_wait_before_s_string() {
+        let yaml = "path: /api/test\nwait-before: \"2s\"";
+        let spec: TestStepSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(spec.wait_before, Some(json!("2s")));
+    }
+
+    #[test]
+    fn test_spec_wait_after_string() {
+        let yaml = "path: /api/test\nwait-after: \"1s\"";
+        let spec: TestStepSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(spec.wait_after, Some(json!("1s")));
+    }
+
+    #[test]
+    fn test_spec_retry_integer() {
+        let yaml = "path: /api/test\nretry: 3";
+        let spec: TestStepSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(spec.retry, Some(3));
+    }
+
+    #[test]
+    fn test_spec_wait_and_retry_absent_by_default() {
+        let yaml = "path: /api/test";
+        let spec: TestStepSpec = serde_yaml::from_str(yaml).unwrap();
+        assert!(spec.wait_before.is_none());
+        assert!(spec.wait_after.is_none());
+        assert!(spec.retry.is_none());
+    }
+
+    #[test]
+    fn test_step_retry_defaults_to_zero() {
+        let yaml = "path: /api/test";
+        let spec: TestStepSpec = serde_yaml::from_str(yaml).unwrap();
+        let step = TestStep::from_spec(spec);
+        assert_eq!(step.retry, 0);
+    }
+
+    #[test]
+    fn test_step_wait_before_preserved_from_spec() {
+        let yaml = "path: /api/test\nwait-before: 200";
+        let spec: TestStepSpec = serde_yaml::from_str(yaml).unwrap();
+        let step = TestStep::from_spec(spec);
+        assert_eq!(step.wait_before, Some(json!(200)));
+    }
+
+    #[test]
+    fn test_step_wait_after_preserved_from_spec() {
+        let yaml = "path: /api/test\nwait-after: \"500ms\"";
+        let spec: TestStepSpec = serde_yaml::from_str(yaml).unwrap();
+        let step = TestStep::from_spec(spec);
+        assert_eq!(step.wait_after, Some(json!("500ms")));
+    }
+
+    #[test]
+    fn test_step_retry_preserved_from_spec() {
+        let yaml = "path: /api/test\nretry: 5";
+        let spec: TestStepSpec = serde_yaml::from_str(yaml).unwrap();
+        let step = TestStep::from_spec(spec);
+        assert_eq!(step.retry, 5);
     }
 }
