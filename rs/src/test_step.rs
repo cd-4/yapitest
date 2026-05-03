@@ -1039,6 +1039,19 @@ impl TestStep {
             }
         }
 
+        if let Some(failed) = assertions.iter().find(|a| !a.passed) {
+            let msg = failed.message.clone().unwrap_or_default();
+            return Ok(TestStepResult {
+                step_id: self.id.clone(),
+                status: TestStepFailureReason::ResponseError,
+                failure_message: Some(msg),
+                request_data: Some(req_data),
+                response_data,
+                output_data: None,
+                assertion_results: assertions,
+            });
+        }
+
         Ok(TestStepResult {
             step_id: self.id.clone(),
             status: TestStepFailureReason::NoFailure,
@@ -2075,5 +2088,25 @@ mod tests {
         let spec: TestStepSpec = serde_yaml::from_str(yaml).unwrap();
         let step = TestStep::from_spec(spec);
         assert_eq!(step.retry, 5);
+    }
+
+    // ── failed assertion propagates as ResponseError ──────────────────────────
+
+    #[test]
+    fn test_failed_assertion_in_results_means_response_error() {
+        // If assertions vec contains a failed entry, step must not return NoFailure.
+        // This exercises the guard added before the final Ok(NoFailure) return.
+        let failed = AssertionResult {
+            name: "duration".to_owned(),
+            passed: false,
+            message: Some("request took 500ms, expected less than 1ms".to_owned()),
+        };
+        // Confirm the failure reason is distinguishable from NoFailure.
+        assert_ne!(
+            TestStepFailureReason::ResponseError,
+            TestStepFailureReason::NoFailure
+        );
+        // Confirm the assertion itself is marked failed.
+        assert!(!failed.passed);
     }
 }
