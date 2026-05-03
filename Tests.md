@@ -219,6 +219,44 @@ data: $vars.default-payload        # a variable that holds an object
 
 Assertions to check against the HTTP response. See [Assertions](#assertions) below.
 
+#### `wait-before` *(optional)*
+
+Duration to sleep before the step runs. Accepts a bare integer (milliseconds), or a string with a `ms` or `s` suffix. Applies once before the first attempt — does **not** repeat between retries.
+
+```yaml
+wait-before: 500       # 500 milliseconds
+wait-before: "500ms"   # same
+wait-before: "2s"      # 2 seconds
+```
+
+#### `wait-after` *(optional)*
+
+Duration to sleep after the step completes — whether it passed or failed (after all retries). Same format as `wait-before`. Useful for rate-limiting or letting downstream state propagate before the next step runs.
+
+```yaml
+wait-after: 1s
+```
+
+#### `retry` *(optional)*
+
+Number of additional attempts to make if the step's assertions fail. Default: `0` (no retries). On each attempt the full HTTP request and all assertions are re-run. `wait-before` and `wait-after` do not repeat between attempts. If all attempts fail, the test stops immediately with the last failure.
+
+```yaml
+retry: 3    # up to 4 total attempts (1 initial + 3 retries)
+```
+
+```yaml
+# Combining wait and retry: poll a slow endpoint
+- path: /api/job/$create-job.response.id/status
+  wait-before: 2s     # give the job time to start
+  retry: 5            # retry up to 5 times if the status assertion fails
+  wait-after: 500ms   # brief pause before the next step
+  assert:
+    status-code: 200
+    body:
+      status: "complete"
+```
+
 ---
 
 ## Variables

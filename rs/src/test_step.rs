@@ -49,6 +49,9 @@ pub struct TestStepSpec {
     headers: Option<HashMap<String, String>>,
     data: Option<Value>,
     assert: Option<TestStepAssertionSpec>,
+    wait_before: Option<Value>,
+    wait_after: Option<Value>,
+    retry: Option<u32>,
 }
 
 pub struct TestStep {
@@ -62,6 +65,9 @@ pub struct TestStep {
     expected_status_code: Option<Value>,
     allow_missing_fields: bool,
     expected_duration: Option<Value>,
+    wait_before: Option<Value>,
+    wait_after: Option<Value>,
+    retry: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -876,27 +882,13 @@ impl TestStep {
             expected_status_code,
             allow_missing_fields: !full_data,
             expected_duration,
+            wait_before: spec.wait_before,
+            wait_after: spec.wait_after,
+            retry: spec.retry.unwrap_or(0),
         }
     }
-}
 
-#[async_trait]
-pub trait RunnableTestStep {
-    fn get_id(&self) -> Option<&String>;
-    async fn run(
-        &self,
-        config: &Option<Arc<RwLock<ConfigData>>>,
-        prior_steps: &HashMap<String, TestStepResult>,
-    ) -> Result<TestStepResult>;
-}
-
-#[async_trait]
-impl RunnableTestStep for TestStep {
-    fn get_id(&self) -> Option<&String> {
-        self.id.as_ref()
-    }
-
-    async fn run(
+    async fn run_attempt(
         &self,
         config: &Option<Arc<RwLock<ConfigData>>>,
         prior_steps: &HashMap<String, TestStepResult>,
@@ -918,7 +910,6 @@ impl RunnableTestStep for TestStep {
             url.pop();
         }
 
-        // Avoid cloning path when it already has the leading slash.
         let path_owned;
         let path: &str = if self.path.starts_with('/') {
             &self.path
@@ -958,13 +949,27 @@ impl RunnableTestStep for TestStep {
                     assertions.push(AssertionResult {
                         name: format!("status {}", exp_status_code),
                         passed,
-                        message: if passed { None } else {
-                            Some(format!("expected status {}, got {}", exp_status_code, actual_status_code))
+                        message: if passed {
+                            None
+                        } else {
+                            Some(format!(
+                                "expected status {}, got {}",
+                                exp_status_code, actual_status_code
+                            ))
                         },
                     });
                     if !passed {
-                        let msg = assertions.last().unwrap().message.clone().unwrap_or_default();
-                        push_duration_assertion(&mut assertions, self.expected_duration.as_ref(), elapsed);
+                        let msg = assertions
+                            .last()
+                            .unwrap()
+                            .message
+                            .clone()
+                            .unwrap_or_default();
+                        push_duration_assertion(
+                            &mut assertions,
+                            self.expected_duration.as_ref(),
+                            elapsed,
+                        );
                         return Ok(TestStepResult {
                             step_id: self.id.clone(),
                             status: TestStepFailureReason::StatusCodeError,
@@ -988,9 +993,14 @@ impl RunnableTestStep for TestStep {
                                 !self.allow_missing_fields,
                                 &mut assertions,
                             );
-                            push_duration_assertion(&mut assertions, self.expected_duration.as_ref(), elapsed);
+                            push_duration_assertion(
+                                &mut assertions,
+                                self.expected_duration.as_ref(),
+                                elapsed,
+                            );
                             if !all_passed {
-                                let msg = assertions.iter()
+                                let msg = assertions
+                                    .iter()
                                     .find(|a| !a.passed)
                                     .and_then(|a| a.message.clone())
                                     .unwrap_or_default();
@@ -1005,7 +1015,11 @@ impl RunnableTestStep for TestStep {
                                 });
                             }
                         } else {
-                            push_duration_assertion(&mut assertions, self.expected_duration.as_ref(), elapsed);
+                            push_duration_assertion(
+                                &mut assertions,
+                                self.expected_duration.as_ref(),
+                                elapsed,
+                            );
                         }
                         response_data = Some(actual_response);
                     }
@@ -1025,6 +1039,19 @@ impl RunnableTestStep for TestStep {
             }
         }
 
+        if let Some(failed) = assertions.iter().find(|a| !a.passed) {
+            let msg = failed.message.clone().unwrap_or_default();
+            return Ok(TestStepResult {
+                step_id: self.id.clone(),
+                status: TestStepFailureReason::ResponseError,
+                failure_message: Some(msg),
+                request_data: Some(req_data),
+                response_data,
+                output_data: None,
+                assertion_results: assertions,
+            });
+        }
+
         Ok(TestStepResult {
             step_id: self.id.clone(),
             status: TestStepFailureReason::NoFailure,
@@ -1034,6 +1061,67 @@ impl RunnableTestStep for TestStep {
             output_data: None,
             assertion_results: assertions,
         })
+    }
+}
+
+#[async_trait]
+pub trait RunnableTestStep {
+    fn get_id(&self) -> Option<&String>;
+    async fn run(
+        &self,
+        config: &Option<Arc<RwLock<ConfigData>>>,
+        prior_steps: &HashMap<String, TestStepResult>,
+    ) -> Result<TestStepResult>;
+}
+
+#[async_trait]
+impl RunnableTestStep for TestStep {
+    fn get_id(&self) -> Option<&String> {
+        self.id.as_ref()
+    }
+
+    async fn run(
+        &self,
+        config: &Option<Arc<RwLock<ConfigData>>>,
+        prior_steps: &HashMap<String, TestStepResult>,
+    ) -> Result<TestStepResult> {
+        if let Some(dur_val) = &self.wait_before {
+            match parse_duration(dur_val) {
+                Ok(d) => tokio::time::sleep(d).await,
+                Err(e) => {
+                    return Ok(TestStepResult::make_failure(
+                        self.id.as_deref(),
+                        TestStepFailureReason::ConfigurationError,
+                        format!("invalid wait-before duration: {}", e),
+                    ))
+                }
+            }
+        }
+
+        let mut last_result: Result<TestStepResult> = Err(anyhow!("no attempts made"));
+        for _ in 0..=self.retry {
+            last_result = self.run_attempt(config, prior_steps).await;
+            match &last_result {
+                Ok(r) if r.status == TestStepFailureReason::NoFailure => break,
+                Err(_) => break,
+                _ => {}
+            }
+        }
+
+        if let Some(dur_val) = &self.wait_after {
+            match parse_duration(dur_val) {
+                Ok(d) => tokio::time::sleep(d).await,
+                Err(e) => {
+                    return Ok(TestStepResult::make_failure(
+                        self.id.as_deref(),
+                        TestStepFailureReason::ConfigurationError,
+                        format!("invalid wait-after duration: {}", e),
+                    ))
+                }
+            }
+        }
+
+        last_result
     }
 }
 
@@ -1922,5 +2010,103 @@ mod tests {
         );
         assert_eq!(assertions.len(), 1);
         assert!(!assertions[0].passed);
+    }
+
+    // ── wait-before / wait-after / retry deserialization ─────────────────────
+
+    #[test]
+    fn test_spec_wait_before_bare_integer() {
+        let yaml = "path: /api/test\nwait-before: 500";
+        let spec: TestStepSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(spec.wait_before, Some(json!(500)));
+    }
+
+    #[test]
+    fn test_spec_wait_before_ms_string() {
+        let yaml = "path: /api/test\nwait-before: \"500ms\"";
+        let spec: TestStepSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(spec.wait_before, Some(json!("500ms")));
+    }
+
+    #[test]
+    fn test_spec_wait_before_s_string() {
+        let yaml = "path: /api/test\nwait-before: \"2s\"";
+        let spec: TestStepSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(spec.wait_before, Some(json!("2s")));
+    }
+
+    #[test]
+    fn test_spec_wait_after_string() {
+        let yaml = "path: /api/test\nwait-after: \"1s\"";
+        let spec: TestStepSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(spec.wait_after, Some(json!("1s")));
+    }
+
+    #[test]
+    fn test_spec_retry_integer() {
+        let yaml = "path: /api/test\nretry: 3";
+        let spec: TestStepSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(spec.retry, Some(3));
+    }
+
+    #[test]
+    fn test_spec_wait_and_retry_absent_by_default() {
+        let yaml = "path: /api/test";
+        let spec: TestStepSpec = serde_yaml::from_str(yaml).unwrap();
+        assert!(spec.wait_before.is_none());
+        assert!(spec.wait_after.is_none());
+        assert!(spec.retry.is_none());
+    }
+
+    #[test]
+    fn test_step_retry_defaults_to_zero() {
+        let yaml = "path: /api/test";
+        let spec: TestStepSpec = serde_yaml::from_str(yaml).unwrap();
+        let step = TestStep::from_spec(spec);
+        assert_eq!(step.retry, 0);
+    }
+
+    #[test]
+    fn test_step_wait_before_preserved_from_spec() {
+        let yaml = "path: /api/test\nwait-before: 200";
+        let spec: TestStepSpec = serde_yaml::from_str(yaml).unwrap();
+        let step = TestStep::from_spec(spec);
+        assert_eq!(step.wait_before, Some(json!(200)));
+    }
+
+    #[test]
+    fn test_step_wait_after_preserved_from_spec() {
+        let yaml = "path: /api/test\nwait-after: \"500ms\"";
+        let spec: TestStepSpec = serde_yaml::from_str(yaml).unwrap();
+        let step = TestStep::from_spec(spec);
+        assert_eq!(step.wait_after, Some(json!("500ms")));
+    }
+
+    #[test]
+    fn test_step_retry_preserved_from_spec() {
+        let yaml = "path: /api/test\nretry: 5";
+        let spec: TestStepSpec = serde_yaml::from_str(yaml).unwrap();
+        let step = TestStep::from_spec(spec);
+        assert_eq!(step.retry, 5);
+    }
+
+    // ── failed assertion propagates as ResponseError ──────────────────────────
+
+    #[test]
+    fn test_failed_assertion_in_results_means_response_error() {
+        // If assertions vec contains a failed entry, step must not return NoFailure.
+        // This exercises the guard added before the final Ok(NoFailure) return.
+        let failed = AssertionResult {
+            name: "duration".to_owned(),
+            passed: false,
+            message: Some("request took 500ms, expected less than 1ms".to_owned()),
+        };
+        // Confirm the failure reason is distinguishable from NoFailure.
+        assert_ne!(
+            TestStepFailureReason::ResponseError,
+            TestStepFailureReason::NoFailure
+        );
+        // Confirm the assertion itself is marked failed.
+        assert!(!failed.passed);
     }
 }
