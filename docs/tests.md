@@ -252,13 +252,15 @@ retry: 3    # up to 4 total attempts (1 initial + 3 retries)
 
 ## Assertions
 
-The `assert` block can contain any combination of `status-code`, `body`, `full`, and `duration`.
+The `assert` block can contain any combination of `status-code`, `headers`, `body`, `full`, and `duration`.
 
 ```yaml
 assert:
   status-code: 201
   duration: 500ms
   full: true
+  headers:
+    content-type: "re/application/json.*"
   body:
     id: +int
     title: +str
@@ -380,9 +382,36 @@ Supported operators: `=`, `>=`, `<=`, `>`, `<`.
 
 ---
 
+### `headers`
+
+Asserts fields within the HTTP response headers. Header names are matched case-insensitively; examples use lowercase to match yapitest's assertion output. Fields not listed are ignored.
+
+Header values support the same exact value, type, variable reference, regex, and `len(...)` assertions as `body`.
+
+```yaml
+assert:
+  headers:
+    content-type: "re/application/json.*"
+    x-request-id: +str
+    x-api-version: $vars.expected-api-version
+    len(x-request-id): 36
+```
+
+If a response contains multiple values for the same header, yapitest exposes that header as an array:
+
+```yaml
+assert:
+  headers:
+    set-cookie:
+      - "session=abc"
+      - "theme=dark"
+```
+
+---
+
 ### `full`
 
-When `full: true`, every field in the response body must be explicitly listed in `body`. Any field present in the response but missing from the assertion fails the test.
+When `full: true`, every field in the response body must be explicitly listed in `body`. Any field present in the response but missing from the assertion fails the test. `full` does not apply to `headers`; extra response headers are ignored.
 
 ```yaml
 assert:
@@ -431,6 +460,8 @@ test-create-and-get-post:
       assert:
         status-code: 201
         duration: 1s
+        headers:
+          content-type: "re/application/json.*"
         body:
           post_id: +int
 
@@ -438,6 +469,8 @@ test-create-and-get-post:
       assert:
         status-code: 200
         duration: 500ms
+        headers:
+          content-type: "re/application/json.*"
         full: true
         body:
           id: +int

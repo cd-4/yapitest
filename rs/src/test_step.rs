@@ -34,6 +34,7 @@ pub enum TestStepFailureReason {
 #[serde(rename_all = "kebab-case")]
 pub struct TestStepAssertionSpec {
     status_code: Option<Value>,
+    headers: Option<Value>,
     body: Option<Value>,
     full: Option<bool>,
     duration: Option<Value>,
@@ -61,6 +62,7 @@ pub struct TestStep {
     method: Method,
     header_data: HashMap<String, String>,
     request_data: Value,
+    expected_response_headers: Option<Value>,
     expected_response_data: Option<Value>,
     expected_status_code: Option<Value>,
     allow_missing_fields: bool,
@@ -702,6 +704,60 @@ pub fn compare_data(
     compare_data_inner(observed, expected, full, "", config, prior_steps, assertions)
 }
 
+fn response_headers_to_value(headers: &HeaderMap) -> Value {
+    let mut output = Map::new();
+
+    for (name, value) in headers.iter() {
+        let key = name.as_str().to_ascii_lowercase();
+        let value = Value::String(String::from_utf8_lossy(value.as_bytes()).into_owned());
+
+        match output.get_mut(&key) {
+            Some(Value::Array(values)) => values.push(value),
+            Some(existing) => {
+                let previous = std::mem::replace(existing, Value::Null);
+                *existing = Value::Array(vec![previous, value]);
+            }
+            None => {
+                output.insert(key, value);
+            }
+        }
+    }
+
+    Value::Object(output)
+}
+
+fn normalize_expected_headers(expected: &Value) -> Value {
+    let Some(headers) = expected.as_object() else {
+        return expected.clone();
+    };
+
+    Value::Object(
+        headers
+            .iter()
+            .map(|(key, value)| (key.to_ascii_lowercase(), value.clone()))
+            .collect(),
+    )
+}
+
+fn compare_headers(
+    observed: &Value,
+    expected: &Value,
+    config: &Option<Arc<RwLock<ConfigData>>>,
+    prior_steps: &HashMap<String, TestStepResult>,
+    assertions: &mut Vec<AssertionResult>,
+) -> bool {
+    let expected = normalize_expected_headers(expected);
+    compare_data_inner(
+        observed,
+        &expected,
+        false,
+        "headers",
+        config,
+        prior_steps,
+        assertions,
+    )
+}
+
 fn push_duration_assertion(
     assertions: &mut Vec<AssertionResult>,
     expected: Option<&Value>,
@@ -732,6 +788,43 @@ fn push_duration_assertion(
                 },
             });
         }
+    }
+}
+
+fn failed_assertion_message(assertions: &[AssertionResult]) -> Option<String> {
+    let failures: Vec<String> = assertions
+        .iter()
+        .filter(|assertion| !assertion.passed)
+        .map(|assertion| {
+            assertion
+                .message
+                .clone()
+                .unwrap_or_else(|| assertion.name.clone())
+        })
+        .collect();
+
+    match failures.len() {
+        0 => None,
+        1 => failures.into_iter().next(),
+        count => Some(format!(
+            "{} assertions failed: {}",
+            count,
+            failures.join("; ")
+        )),
+    }
+}
+
+fn failed_assertion_reason(
+    assertions: &[AssertionResult],
+    fallback: TestStepFailureReason,
+) -> TestStepFailureReason {
+    if assertions
+        .iter()
+        .any(|assertion| !assertion.passed && assertion.name.starts_with("status "))
+    {
+        TestStepFailureReason::StatusCodeError
+    } else {
+        fallback
     }
 }
 
@@ -858,11 +951,13 @@ impl TestStep {
             req_data = request_data;
         }
 
+        let mut expected_response_headers: Option<Value> = None;
         let mut expected_response_data: Option<Value> = None;
         let mut expected_status_code: Option<Value> = None;
         let mut full_data: bool = false;
         let mut expected_duration: Option<Value> = None;
         if let Some(assertion_data) = spec.assert {
+            expected_response_headers = assertion_data.headers;
             expected_response_data = assertion_data.body;
             expected_status_code = assertion_data.status_code;
             if let Some(full) = assertion_data.full {
@@ -878,6 +973,7 @@ impl TestStep {
             method: TestStep::get_method(spec.method),
             header_data,
             request_data: req_data,
+            expected_response_headers,
             expected_response_data,
             expected_status_code,
             allow_missing_fields: !full_data,
@@ -929,6 +1025,7 @@ impl TestStep {
         let req_data = clean_request_data(&self.request_data, config, prior_steps)?;
         let mut assertions: Vec<AssertionResult> = Vec::new();
         let mut response_data: Option<Value> = None;
+        let mut failure_reason = TestStepFailureReason::ResponseError;
 
         let t0 = std::time::Instant::now();
 
@@ -941,6 +1038,7 @@ impl TestStep {
         {
             Ok(response) => {
                 let actual_status_code = response.status().as_u16();
+                let actual_headers = response_headers_to_value(response.headers());
                 let res_text = response.text().await?;
                 let elapsed = t0.elapsed();
 
@@ -958,34 +1056,22 @@ impl TestStep {
                             ))
                         },
                     });
-                    if !passed {
-                        let msg = assertions
-                            .last()
-                            .unwrap()
-                            .message
-                            .clone()
-                            .unwrap_or_default();
-                        push_duration_assertion(
-                            &mut assertions,
-                            self.expected_duration.as_ref(),
-                            elapsed,
-                        );
-                        return Ok(TestStepResult {
-                            step_id: self.id.clone(),
-                            status: TestStepFailureReason::StatusCodeError,
-                            failure_message: Some(msg),
-                            response_data: None,
-                            request_data: Some(req_data),
-                            output_data: None,
-                            assertion_results: assertions,
-                        });
-                    }
+                }
+
+                if let Some(expected_headers) = &self.expected_response_headers {
+                    compare_headers(
+                        &actual_headers,
+                        expected_headers,
+                        config,
+                        prior_steps,
+                        &mut assertions,
+                    );
                 }
 
                 match serde_json::from_str::<Value>(&res_text) {
                     Ok(actual_response) => {
                         if let Some(expected_response) = &self.expected_response_data {
-                            let all_passed = compare_data(
+                            compare_data(
                                 &actual_response,
                                 expected_response,
                                 config,
@@ -993,57 +1079,32 @@ impl TestStep {
                                 !self.allow_missing_fields,
                                 &mut assertions,
                             );
-                            push_duration_assertion(
-                                &mut assertions,
-                                self.expected_duration.as_ref(),
-                                elapsed,
-                            );
-                            if !all_passed {
-                                let msg = assertions
-                                    .iter()
-                                    .find(|a| !a.passed)
-                                    .and_then(|a| a.message.clone())
-                                    .unwrap_or_default();
-                                return Ok(TestStepResult {
-                                    step_id: self.id.clone(),
-                                    status: TestStepFailureReason::ResponseError,
-                                    failure_message: Some(msg),
-                                    response_data: Some(actual_response),
-                                    request_data: Some(req_data),
-                                    output_data: None,
-                                    assertion_results: assertions,
-                                });
-                            }
-                        } else {
-                            push_duration_assertion(
-                                &mut assertions,
-                                self.expected_duration.as_ref(),
-                                elapsed,
-                            );
                         }
                         response_data = Some(actual_response);
                     }
                     Err(e) => {
                         if self.expected_response_data.is_some() {
-                            return Ok(TestStepResult::make_failure(
-                                self.id.as_deref(),
-                                TestStepFailureReason::JsonDecodeError,
-                                format!("response body is not valid JSON: {}", e),
-                            ));
+                            failure_reason = TestStepFailureReason::JsonDecodeError;
+                            assertions.push(AssertionResult {
+                                name: "body".to_owned(),
+                                passed: false,
+                                message: Some(format!("response body is not valid JSON: {}", e)),
+                            });
                         }
                     }
                 }
+
+                push_duration_assertion(&mut assertions, self.expected_duration.as_ref(), elapsed);
             }
             Err(e) => {
                 return Err(anyhow!("HTTP request failed: {}", e));
             }
         }
 
-        if let Some(failed) = assertions.iter().find(|a| !a.passed) {
-            let msg = failed.message.clone().unwrap_or_default();
+        if let Some(msg) = failed_assertion_message(&assertions) {
             return Ok(TestStepResult {
                 step_id: self.id.clone(),
-                status: TestStepFailureReason::ResponseError,
+                status: failed_assertion_reason(&assertions, failure_reason),
                 failure_message: Some(msg),
                 request_data: Some(req_data),
                 response_data,
@@ -1206,6 +1267,19 @@ mod tests {
                 &mut assertions,
             );
         }
+        assertions
+    }
+
+    fn run_compare_headers(headers: HeaderMap, expected: Value) -> Vec<AssertionResult> {
+        let observed = response_headers_to_value(&headers);
+        let mut assertions = vec![];
+        compare_headers(
+            &observed,
+            &expected,
+            &no_config(),
+            &no_prior_steps(),
+            &mut assertions,
+        );
         assertions
     }
 
@@ -1509,6 +1583,55 @@ mod tests {
         let mut headers = HashMap::new();
         headers.insert("authorization".to_owned(), "$vars.nonexistent".to_owned());
         assert!(clean_headers(&headers, &no_config(), &no_prior_steps()).is_err());
+    }
+
+    // ── response header assertions ───────────────────────────────────────────
+
+    #[test]
+    fn test_response_headers_exact_match_case_insensitive_name() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-type", HeaderValue::from_static("application/json"));
+
+        let assertions = run_compare_headers(headers, json!({"Content-Type": "application/json"}));
+
+        assert_eq!(assertions.len(), 1);
+        assert!(assertions[0].passed, "{:?}", assertions);
+        assert_eq!(assertions[0].name, "headers.content-type");
+    }
+
+    #[test]
+    fn test_response_headers_regex_match() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-request-id", HeaderValue::from_static("REQ-123456"));
+
+        let assertions = run_compare_headers(headers, json!({"X-Request-ID": "re/REQ-[0-9]{6}"}));
+
+        assert_eq!(assertions.len(), 1);
+        assert!(assertions[0].passed, "{:?}", assertions);
+    }
+
+    #[test]
+    fn test_response_headers_missing_header_fails() {
+        let headers = HeaderMap::new();
+
+        let assertions = run_compare_headers(headers, json!({"X-Request-ID": "+str"}));
+
+        assert_eq!(assertions.len(), 1);
+        assert!(!assertions[0].passed);
+        let msg = assertions[0].message.as_deref().unwrap();
+        assert!(msg.contains("missing field 'headers.x-request-id'"), "{}", msg);
+    }
+
+    #[test]
+    fn test_response_headers_duplicate_values_are_arrays() {
+        let mut headers = HeaderMap::new();
+        headers.append("set-cookie", HeaderValue::from_static("a=1"));
+        headers.append("set-cookie", HeaderValue::from_static("b=2"));
+
+        let assertions = run_compare_headers(headers, json!({"set-cookie": ["a=1", "b=2"]}));
+
+        assert_eq!(assertions.len(), 2);
+        assert!(assertions.iter().all(|assertion| assertion.passed), "{:?}", assertions);
     }
 
     // ── clean_request_data (extended) ────────────────────────────────────────
@@ -2010,6 +2133,65 @@ mod tests {
         );
         assert_eq!(assertions.len(), 1);
         assert!(!assertions[0].passed);
+    }
+
+    // ── failed_assertion_message / failed_assertion_reason ───────────────────
+
+    #[test]
+    fn test_failed_assertion_message_returns_none_when_all_pass() {
+        let assertions = vec![AssertionResult {
+            name: "status 200".to_owned(),
+            passed: true,
+            message: None,
+        }];
+        assert_eq!(failed_assertion_message(&assertions), None);
+    }
+
+    #[test]
+    fn test_failed_assertion_message_includes_all_failures() {
+        let assertions = vec![
+            AssertionResult {
+                name: "status 200".to_owned(),
+                passed: false,
+                message: Some("expected status 200, got 500".to_owned()),
+            },
+            AssertionResult {
+                name: "name".to_owned(),
+                passed: true,
+                message: None,
+            },
+            AssertionResult {
+                name: "email".to_owned(),
+                passed: false,
+                message: Some("'email' — expected a string, got Null (null)".to_owned()),
+            },
+        ];
+
+        let msg = failed_assertion_message(&assertions).unwrap();
+        assert!(msg.contains("2 assertions failed"), "{}", msg);
+        assert!(msg.contains("expected status 200, got 500"), "{}", msg);
+        assert!(msg.contains("'email'"), "{}", msg);
+    }
+
+    #[test]
+    fn test_failed_assertion_reason_prefers_status_code_failure() {
+        let assertions = vec![
+            AssertionResult {
+                name: "body".to_owned(),
+                passed: false,
+                message: Some("response body is not valid JSON".to_owned()),
+            },
+            AssertionResult {
+                name: "status 200".to_owned(),
+                passed: false,
+                message: Some("expected status 200, got 500".to_owned()),
+            },
+        ];
+
+        assert_eq!(
+            failed_assertion_reason(&assertions, TestStepFailureReason::JsonDecodeError),
+            TestStepFailureReason::StatusCodeError
+        );
     }
 
     // ── wait-before / wait-after / retry deserialization ─────────────────────

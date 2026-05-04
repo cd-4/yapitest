@@ -29,9 +29,13 @@ test-create-and-get-post:
         body: Some message
       assert:
         status-code: 201
+        headers:
+          content-type: "re/application/json.*"
 
     - path: /api/post/$create-post.response.post_id
       assert:
+        headers:
+          content-type: "re/application/json.*"
         body:
           title: Some Title
           body: Some message

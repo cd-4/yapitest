@@ -1,0 +1,66 @@
+test-response-header-content-type-exact:
+  steps:
+    - path: /api/healthz
+      assert:
+        status-code: 200
+        headers:
+          content-type: application/json
+        body:
+          healthy: true
+
+test-response-header-content-type-regex:
+  steps:
+    - path: /api/user/create
+      method: POST
+      data:
+        username: "re/header-user-[0-9]{6}"
+        password: headerpass001!
+      assert:
+        status-code: 200
+        headers:
+          Content-Type: "re/application/json.*"
+        body:
+          token: +str
+
+test-response-header-type-and-length:
+  steps:
+    - path: /api/post/999999
+      assert:
+        status-code: 404
+        headers:
+          content-type: +str
+          len(content-type): ">=16"
+        body:
+          error: "Post not found"
+
+test-response-header-missing-fail:
+  steps:
+    - path: /api/healthz
+      assert:
+        status-code: 200
+        headers:
+          x-definitely-not-present: +str
+
+test-response-header-value-fail:
+  steps:
+    - path: /api/healthz
+      assert:
+        status-code: 200
+        headers:
+          content-type: text/plain
+
+test-response-header-regex-fail:
+  steps:
+    - path: /api/healthz
+      assert:
+        status-code: 200
+        headers:
+          content-type: "re/text/plain.*"
+
+test-response-header-len-fail:
+  steps:
+    - path: /api/healthz
+      assert:
+        status-code: 200
+        headers:
+          len(content-type): "<5"
