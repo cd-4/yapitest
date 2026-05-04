@@ -1,6 +1,6 @@
 [package]
 name = "yapitest"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2024"
 description = "A YAML-based API testing framework"
 license = "MIT"
