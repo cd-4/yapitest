@@ -1,0 +1,9 @@
+test-login-unknown-user:
+  steps:
+    - path: /api/user/login
+      method: POST
+      data:
+        username: nobody-xyz-9999
+        password: doesntmatter
+      assert:
+        status-code: 404

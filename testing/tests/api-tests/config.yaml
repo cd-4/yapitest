@@ -1,0 +1,27 @@
+vars:
+  default-url:
+    env: BASE_URL
+    default: https://api.example.com
+  api-token:
+    env: API_TOKEN
+    default: replace-me
+
+urls:
+  base: $vars.default-url
+
+step-sets:
+  create-user:
+    once: true
+    steps:
+      - id: create-user
+        path: /api/users
+        method: POST
+        headers:
+          Authorization: Bearer $vars.api-token
+        data:
+          name: Test User
+        assert:
+          status-code: 201
+    output:
+      token: $create-user.response.token
+      user-id: $create-user.response.id
