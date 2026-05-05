@@ -223,6 +223,10 @@ struct Args {
     #[arg(short = 'i', action = ArgAction::Append)]
     include: Vec<String>,
 
+    // Exact test name match
+    #[arg(short = 'k', action = ArgAction::Append)]
+    key: Vec<String>,
+
     // Number of threads
     #[arg(short = 't')]
     threads: Option<u64>,
@@ -529,6 +533,10 @@ async fn main() {
     if !args.exclude.is_empty() {
         let excludes: Vec<&String> = args.exclude.iter().collect();
         tests.retain(|t| !contains_text(t, &excludes));
+    }
+
+    if !args.key.is_empty() {
+        tests.retain(|t| args.key.iter().any(|k| t.name == *k));
     }
 
     if verbosity >= 2 {
