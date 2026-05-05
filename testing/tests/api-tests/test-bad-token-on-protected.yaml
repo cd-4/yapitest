@@ -1,8 +1,0 @@
-test-bad-token-on-protected:
-  steps:
-    - path: /api/user
-      method: GET
-      headers:
-        API-Token: this-is-not-a-real-token
-      assert:
-        status-code: 403

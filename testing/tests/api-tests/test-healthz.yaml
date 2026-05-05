@@ -1,0 +1,6 @@
+test-healthz:
+  steps:
+    - path: /api/healthz
+      method: GET
+      assert:
+        status-code: 200

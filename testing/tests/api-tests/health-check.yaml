@@ -1,9 +1,0 @@
-health-check:
-  steps:
-    - path: /health
-      id: health
-      method: GET
-      headers:
-        Authorization: Bearer $vars.api-token
-      assert:
-        status-code: 200
