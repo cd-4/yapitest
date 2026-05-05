@@ -477,8 +477,14 @@ async fn main() {
 
     let args = Args::parse();
 
+    let path_args: Vec<String> = if args.paths.is_empty() {
+        vec![".".to_string()]
+    } else {
+        args.paths.clone()
+    };
+
     let mut test_paths: Vec<PathBuf> = Vec::new();
-    for path_arg in &args.paths {
+    for path_arg in &path_args {
         let path = PathBuf::from(path_arg);
         if path.exists() {
             match std::fs::canonicalize(&path) {
