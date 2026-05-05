@@ -52,6 +52,7 @@ yapitest [paths...] [options]
 | `-g GROUP` | Only run tests that belong to this group. Repeatable. |
 | `-i TEXT` | Only run tests whose name contains this substring. Repeatable. |
 | `-x TEXT` | Skip tests whose name contains this substring. Repeatable. |
+| `-k NAME` | Only run tests whose name matches exactly. Repeatable. |
 | `-t THREADS` | Number of parallel threads. Defaults to ~75% of available cores. Tests from the same file always run on the same thread. |
 | `-v LEVEL` | Verbosity: `0` silent, `1` names only, `2` pass/fail (default), `3` full assertion detail. |
 | `--output FILE` | Write a [CTRF](https://ctrf.io) JSON report to this path. |
@@ -70,6 +71,9 @@ yapitest tests/ -i user
 
 # Run everything except tests tagged "slow"
 yapitest tests/ -x slow
+
+# Run only the test named exactly "create user"
+yapitest tests/ -k "create user"
 
 # Combine filters
 yapitest tests/ -g smoke -i create

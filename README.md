@@ -66,12 +66,14 @@ yapitest ./tests/test-users.yaml ./tests/test-posts.yaml
 yapitest ./tests -g auth        # only tests in the "auth" group
 yapitest ./tests -i login       # only tests whose name contains "login"
 yapitest ./tests -x slow        # exclude tests whose name contains "slow"
+yapitest ./tests -k "login user"  # only the test named exactly "login user"
 ```
 
 Flags can be repeated to filter by multiple values:
 
 ```bash
 yapitest ./tests -g auth -g admin
+yapitest ./tests -k "login user" -k "create post"
 ```
 
 ### Parallelism
