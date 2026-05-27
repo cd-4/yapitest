@@ -332,58 +332,51 @@ impl Test {
         })
     }
 
-    pub fn load_from_file(path: &PathBuf) -> Result<(Option<ConfigData>, Vec<Test>), Error> {
+    pub fn load_from_value(
+        mut value: Value,
+        path: &PathBuf,
+    ) -> Result<(Option<ConfigData>, Vec<Test>), Error> {
         let mut config: Option<ConfigData> = None;
         let mut tests: Vec<Test> = vec![];
 
-        if let Ok(file) = File::open(path) {
-            let reader = BufReader::new(file);
-            let test_file_result = serde_yaml::from_reader::<_, Value>(reader);
-            match test_file_result {
-                Ok(mut test_file) => {
-                    // Extract the config entry by value (removing it from the mapping)
-                    // so we can pass it to from_val without cloning.
-                    if let Value::Mapping(ref mut mapping) = test_file {
-                        if let Some(config_value) = mapping.remove("config") {
-                            config = Some(ConfigData::from_val(config_value, path)?);
-                        }
-                    }
+        if let Value::Mapping(ref mut mapping) = value {
+            if let Some(config_value) = mapping.remove("config") {
+                config = Some(ConfigData::from_val(config_value, path)?);
+            }
+        }
 
-                    // Consume the mapping so each test's Value can be moved
-                    // into from_value without cloning.
-                    if let Value::Mapping(mapping) = test_file {
-                        for (key_val, value) in mapping {
-                            if let Some(key) = key_val.as_str() {
-                                if is_test_name(key) {
-                                    match from_value::<TestSpec>(value) {
-                                        Ok(test_spec) => {
-                                            let test = Test::from_spec(
-                                                path.clone(),
-                                                key.to_owned(),
-                                                test_spec,
-                                            )?;
-                                            tests.push(test);
-                                        }
-                                        Err(e) => {
-                                            panic!(
-                                                "Failed to parse test: {} at {}\n{}",
-                                                key,
-                                                path.display(),
-                                                e
-                                            );
-                                        }
-                                    }
-                                }
+        if let Value::Mapping(mapping) = value {
+            for (key_val, val) in mapping {
+                if let Some(key) = key_val.as_str() {
+                    if is_test_name(key) {
+                        match from_value::<TestSpec>(val) {
+                            Ok(test_spec) => {
+                                let test =
+                                    Test::from_spec(path.clone(), key.to_owned(), test_spec)?;
+                                tests.push(test);
+                            }
+                            Err(e) => {
+                                return Err(anyhow!("Failed to parse test '{}': {}", key, e));
                             }
                         }
                     }
                 }
-                Err(e) => {
-                    return Err(Error::from(e));
-                }
             }
         }
+
         Ok((config, tests))
+    }
+
+    pub fn load_from_file(path: &PathBuf) -> Result<(Option<ConfigData>, Vec<Test>), Error> {
+        if let Ok(file) = File::open(path) {
+            let reader = BufReader::new(file);
+            match serde_yaml::from_reader::<_, Value>(reader) {
+                Ok(value) => Test::load_from_value(value, path),
+                Err(e) => Err(Error::from(e)),
+            }
+        } else {
+            Ok((None, vec![]))
+        }
     }
 
     pub async fn run(&self) -> TestResult {

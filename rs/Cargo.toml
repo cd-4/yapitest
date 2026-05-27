@@ -8,6 +8,10 @@ repository = "https://github.com/cd-4/yapitest"
 homepage = "https://cd-4.github.io/yapitest"
 readme = "../README.md"
 
+[[bin]]
+name = "yapitest"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = "1.0.102"
 async-trait = "0.1.89"
