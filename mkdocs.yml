@@ -32,6 +32,7 @@ nav:
   - Tests: tests.md
   - Config Files: config.md
   - Variables: variables.md
+  - Rust Library: rust-library.md
 
 markdown_extensions:
   - pymdownx.highlight:
