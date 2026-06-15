@@ -258,6 +258,55 @@ pub fn clean_path(
     Ok(output)
 }
 
+/// Substitutes `$variable.path` references appearing anywhere inside `template`
+/// (e.g. `Bearer $setup.token`). A reference starts with `$` followed by a
+/// letter or underscore and continues through word characters, `.`, and `-`;
+/// a lone `$` or one followed by other characters (like `$5`) is left literal.
+/// Each reference is resolved with [`get_variable`] and the surrounding text is
+/// preserved. Returns an error if a reference cannot be resolved or resolves to
+/// a non-scalar value.
+fn interpolate(
+    template: &str,
+    config: &Option<Arc<RwLock<ConfigData>>>,
+    prior_steps: &HashMap<String, TestStepResult>,
+) -> Result<String> {
+    if !template.contains('$') {
+        return Ok(template.to_owned());
+    }
+    let re = Regex::new(r"\$[A-Za-z_][A-Za-z0-9_.-]*").unwrap();
+    let mut output = String::with_capacity(template.len());
+    let mut last = 0;
+    for m in re.find_iter(template) {
+        output.push_str(&template[last..m.start()]);
+        let token = m.as_str();
+        let resolved = get_variable(token, config, prior_steps)?;
+        match scalar_to_string(&resolved) {
+            Some(s) => output.push_str(&s),
+            None => {
+                return Err(anyhow!(
+                    "'{}' resolved to a non-string value ({})",
+                    token,
+                    value_type_name(&resolved)
+                ));
+            }
+        }
+        last = m.end();
+    }
+    output.push_str(&template[last..]);
+    Ok(output)
+}
+
+/// Renders a scalar JSON value as the string to splice into an interpolated
+/// template. Objects, arrays, and null have no sensible textual form here.
+fn scalar_to_string(v: &Value) -> Option<String> {
+    match v {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
 pub fn clean_headers(
     header_data: &HashMap<String, String>,
     config: &Option<Arc<RwLock<ConfigData>>>,
@@ -265,30 +314,19 @@ pub fn clean_headers(
 ) -> Result<HeaderMap> {
     let mut output: HeaderMap = HeaderMap::new();
     for (k, v) in header_data {
-        if v.starts_with('$') {
-            match get_variable(v, config, prior_steps) {
-                Ok(header_value) => {
-                    if let Some(header_str) = header_value.as_str() {
-                        let name = HeaderName::from_bytes(k.as_bytes()).unwrap();
-                        let val = HeaderValue::from_str(header_str).unwrap();
-                        output.insert(name, val);
-                    } else {
-                        return Err(anyhow!(
-                            "header '{}': '{}' resolved to a non-string value",
-                            k,
-                            v
-                        ));
-                    }
-                }
-                Err(e) => {
-                    return Err(anyhow!("header '{}': could not resolve '{}' — {}", k, v, e));
-                }
-            }
-        } else {
-            let name = HeaderName::from_bytes(k.as_bytes()).unwrap();
-            let val = HeaderValue::from_str(v).unwrap();
-            output.insert(name, val);
-        }
+        let resolved =
+            interpolate(v, config, prior_steps).map_err(|e| anyhow!("header '{}': {}", k, e))?;
+        let name = HeaderName::from_bytes(k.as_bytes())
+            .map_err(|e| anyhow!("header '{}': invalid header name — {}", k, e))?;
+        let val = HeaderValue::from_str(&resolved).map_err(|e| {
+            anyhow!(
+                "header '{}': '{}' is not a valid header value — {}",
+                k,
+                resolved,
+                e
+            )
+        })?;
+        output.insert(name, val);
     }
     Ok(output)
 }
@@ -1582,6 +1620,71 @@ mod tests {
     fn test_clean_headers_missing_variable_errors() {
         let mut headers = HashMap::new();
         headers.insert("authorization".to_owned(), "$vars.nonexistent".to_owned());
+        assert!(clean_headers(&headers, &no_config(), &no_prior_steps()).is_err());
+    }
+
+    #[test]
+    fn test_clean_headers_inline_interpolation_from_config() {
+        let cfg = make_config("vars:\n  token: xyz789");
+        let mut headers = HashMap::new();
+        headers.insert("authorization".to_owned(), "Bearer $vars.token".to_owned());
+        let result = clean_headers(&headers, &cfg, &no_prior_steps()).unwrap();
+        assert_eq!(result.get("authorization").unwrap(), "Bearer xyz789");
+    }
+
+    #[test]
+    fn test_clean_headers_inline_interpolation_from_prior_step() {
+        let mut prior = no_prior_steps();
+        prior.insert(
+            "login".to_owned(),
+            make_step_result("login", json!({"token": "abc123"}), json!({})),
+        );
+        let mut headers = HashMap::new();
+        headers.insert(
+            "authorization".to_owned(),
+            "Bearer $login.response.token".to_owned(),
+        );
+        let result = clean_headers(&headers, &no_config(), &prior).unwrap();
+        assert_eq!(result.get("authorization").unwrap(), "Bearer abc123");
+    }
+
+    #[test]
+    fn test_clean_headers_multiple_references_in_one_value() {
+        let cfg = make_config("vars:\n  scheme: Bearer\n  token: xyz789");
+        let mut headers = HashMap::new();
+        headers.insert(
+            "authorization".to_owned(),
+            "$vars.scheme $vars.token".to_owned(),
+        );
+        let result = clean_headers(&headers, &cfg, &no_prior_steps()).unwrap();
+        assert_eq!(result.get("authorization").unwrap(), "Bearer xyz789");
+    }
+
+    #[test]
+    fn test_clean_headers_inline_stringifies_non_string_scalar() {
+        let mut prior = no_prior_steps();
+        prior.insert(
+            "step".to_owned(),
+            make_step_result("step", json!({"page": 2}), json!({})),
+        );
+        let mut headers = HashMap::new();
+        headers.insert("x-page".to_owned(), "page-$step.response.page".to_owned());
+        let result = clean_headers(&headers, &no_config(), &prior).unwrap();
+        assert_eq!(result.get("x-page").unwrap(), "page-2");
+    }
+
+    #[test]
+    fn test_clean_headers_literal_dollar_left_untouched() {
+        let mut headers = HashMap::new();
+        headers.insert("x-price".to_owned(), "$5 off".to_owned());
+        let result = clean_headers(&headers, &no_config(), &no_prior_steps()).unwrap();
+        assert_eq!(result.get("x-price").unwrap(), "$5 off");
+    }
+
+    #[test]
+    fn test_clean_headers_inline_missing_variable_errors() {
+        let mut headers = HashMap::new();
+        headers.insert("authorization".to_owned(), "Bearer $vars.nope".to_owned());
         assert!(clean_headers(&headers, &no_config(), &no_prior_steps()).is_err());
     }
 

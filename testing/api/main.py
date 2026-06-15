@@ -153,6 +153,18 @@ def user():
         return {"success": True}
 
 
+@app.route("/api/user/whoami", methods=["GET"])
+def whoami():
+    auth = request.headers.get("Authorization", "")
+    prefix = "Bearer "
+    if not auth.startswith(prefix):
+        return jsonify({"error": "Missing or malformed Authorization header"}), 401
+    token = auth[len(prefix):]
+    if token not in USERS_BY_TOKEN:
+        return jsonify({"error": "Invalid token"}), 403
+    return USERS_BY_TOKEN[token].to_json()
+
+
 @app.route("/api/user/<username>", methods=["GET"])
 def get_user(username):
     if username not in USERS_BY_USERNAME:
