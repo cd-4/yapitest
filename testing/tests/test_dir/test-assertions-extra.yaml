@@ -1,0 +1,84 @@
+# Phase 2 assertion features: presence markers, null, numeric comparisons,
+# array indexing + +exists membership, status-code lists.
+
+test-public-profile-absence-and-null:
+  setup: create-user
+  steps:
+    - path: /api/user/$setup.username/public
+      assert:
+        status-code: 200
+        body:
+          name: +exists
+          token: +absent
+          password: +absent
+          ends_at: +null
+          id: ">=1"
+
+test-status-code-list:
+  steps:
+    - path: /api/healthz
+      assert:
+        status-code: [200, 204]
+
+test-post-list-contains-created:
+  setup: create-user
+  steps:
+    - id: make
+      path: /api/post/create
+      method: POST
+      headers:
+        API-Token: $setup.token
+      data:
+        title: "Find Me"
+        body: "needle"
+      assert:
+        status-code: 201
+    - path: /api/post/list
+      assert:
+        status-code: 200
+        body:
+          posts:
+            +exists:
+              id: ${make.response.post_id}
+              title: "Find Me"
+
+test-post-list-index:
+  steps:
+    - id: list
+      path: /api/post/list
+      assert:
+        status-code: 200
+        body:
+          len(posts): ">=1"
+    # Index into the array (posts.0.id) in both a path and an expected value.
+    - path: /api/post/$list.response.posts.0.id
+      assert:
+        status-code: 200
+        body:
+          id: $list.response.posts.0.id
+
+# ── designed to fail ────────────────────────────────────────────────────────
+
+test-absent-violated-fail:
+  setup: create-user
+  steps:
+    - path: /api/user/$setup.username/public
+      assert:
+        body:
+          name: +absent   # name IS present → must fail
+
+test-numeric-comparison-fail:
+  steps:
+    - path: /api/post/list
+      assert:
+        body:
+          len(posts): ">=999999"
+
+test-contains-missing-fail:
+  steps:
+    - path: /api/post/list
+      assert:
+        body:
+          posts:
+            +exists:
+              id: -1

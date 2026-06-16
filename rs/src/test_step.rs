@@ -48,6 +48,7 @@ pub struct TestStepSpec {
     url: Option<String>,
     method: Option<String>,
     headers: Option<HashMap<String, String>>,
+    query: Option<HashMap<String, String>>,
     data: Option<Value>,
     assert: Option<TestStepAssertionSpec>,
     wait_before: Option<Value>,
@@ -61,6 +62,7 @@ pub struct TestStep {
     url: Option<String>,
     method: Method,
     header_data: HashMap<String, String>,
+    query_data: HashMap<String, String>,
     request_data: Value,
     expected_response_headers: Option<Value>,
     expected_response_data: Option<Value>,
@@ -211,13 +213,7 @@ pub fn clean_request_data(
         }
         Ok(Value::Array(new_val))
     } else if let Some(data_str) = request_data.as_str() {
-        if let Some(pattern) = data_str.strip_prefix("re/") {
-            Ok(Value::String(generate_regex_string(pattern)?))
-        } else if data_str.starts_with('$') {
-            get_variable(data_str, config, prior_steps)
-        } else {
-            Ok(Value::from(data_str))
-        }
+        resolve_value(data_str, config, prior_steps)
     } else {
         Ok(request_data.clone())
     }
@@ -228,44 +224,110 @@ pub fn clean_path(
     config: &Option<Arc<RwLock<ConfigData>>>,
     prior_steps: &HashMap<String, TestStepResult>,
 ) -> Result<String> {
-    let ends_with_slash = path.ends_with('/');
-
-    let mut segments: Vec<String> = vec![];
-
-    for segment in path.split('/') {
-        if segment.starts_with('$') {
-            let new_seg = get_variable(segment, config, prior_steps)?;
-            if let Some(seg_str) = new_seg.as_str() {
-                segments.push(seg_str.to_owned());
-            } else if let Some(seg_int) = new_seg.as_i64() {
-                segments.push(format!("{}", seg_int));
-            } else {
-                return Err(anyhow!(
-                    "path variable '{}' must resolve to a string or integer, got {}",
-                    segment,
-                    value_type_name(&new_seg)
-                ));
-            }
-        } else {
-            segments.push(segment.to_owned());
-        }
+    let interpolated = interpolate_string(path, config, prior_steps)?;
+    if interpolated.starts_with('/') {
+        Ok(interpolated)
+    } else {
+        Ok(format!("/{}", interpolated))
     }
-    let mut output = segments.join("/");
-    output.insert(0, '/');
-    if ends_with_slash {
-        output.push('/');
-    }
-    Ok(output)
 }
 
-/// Substitutes `$variable.path` references appearing anywhere inside `template`
-/// (e.g. `Bearer $setup.token`). A reference starts with `$` followed by a
-/// letter or underscore and continues through word characters, `.`, and `-`;
-/// a lone `$` or one followed by other characters (like `$5`) is left literal.
-/// Each reference is resolved with [`get_variable`] and the surrounding text is
-/// preserved. Returns an error if a reference cannot be resolved or resolves to
-/// a non-scalar value.
-fn interpolate(
+/// One span of a scanned template: literal text or a variable reference
+/// (the reference string includes its leading `$`, ready for `get_variable`).
+enum Segment {
+    Literal(String),
+    Ref(String),
+}
+
+/// Length in bytes of a bare `$ident` starting at `rest` (the text after `$`).
+/// Identifiers start with a letter or `_`, then allow letters/digits/`_`/`.`/`-`.
+/// A trailing `.` or `-` is NOT captured (so `$x.` yields `x`). Returns 0 when
+/// `rest` does not start a valid identifier.
+fn bare_ident_len(rest: &str) -> usize {
+    let mut len = 0;
+    for (idx, ch) in rest.char_indices() {
+        let ok = if idx == 0 {
+            ch.is_ascii_alphabetic() || ch == '_'
+        } else {
+            ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' || ch == '-'
+        };
+        if ok {
+            len = idx + ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    while len > 0 {
+        let last = rest[..len].chars().next_back().unwrap();
+        if last == '.' || last == '-' {
+            len -= last.len_utf8();
+        } else {
+            break;
+        }
+    }
+    len
+}
+
+/// Split `template` into literal and reference segments. Supports `${path}`
+/// (delimited), bare `$path`, and `$$` (escaped literal `$`). A lone `$` or one
+/// followed by a non-identifier is treated literally.
+fn scan_template(template: &str) -> Vec<Segment> {
+    let mut segs: Vec<Segment> = Vec::new();
+    let mut lit = String::new();
+    let push_lit = |lit: &mut String, segs: &mut Vec<Segment>| {
+        if !lit.is_empty() {
+            segs.push(Segment::Literal(std::mem::take(lit)));
+        }
+    };
+
+    let mut i = 0;
+    while i < template.len() {
+        match template[i..].find('$') {
+            None => {
+                lit.push_str(&template[i..]);
+                break;
+            }
+            Some(rel) => {
+                lit.push_str(&template[i..i + rel]);
+                let dollar = i + rel;
+                let after = dollar + 1;
+                let next = template.as_bytes().get(after).copied();
+                if next == Some(b'$') {
+                    lit.push('$');
+                    i = after + 1;
+                } else if next == Some(b'{') {
+                    if let Some(crel) = template[after + 1..].find('}') {
+                        let key = &template[after + 1..after + 1 + crel];
+                        push_lit(&mut lit, &mut segs);
+                        segs.push(Segment::Ref(format!("${}", key)));
+                        i = after + 1 + crel + 1;
+                    } else {
+                        lit.push('$');
+                        i = after;
+                    }
+                } else {
+                    let idlen = bare_ident_len(&template[after..]);
+                    if idlen > 0 {
+                        let key = &template[after..after + idlen];
+                        push_lit(&mut lit, &mut segs);
+                        segs.push(Segment::Ref(format!("${}", key)));
+                        i = after + idlen;
+                    } else {
+                        lit.push('$');
+                        i = after;
+                    }
+                }
+            }
+        }
+    }
+    push_lit(&mut lit, &mut segs);
+    segs
+}
+
+/// Interpolate `template` into a String. Every reference is resolved and
+/// stringified (string/number/bool); object/array/null references error.
+/// Used for headers, paths, and query values.
+pub fn interpolate_string(
     template: &str,
     config: &Option<Arc<RwLock<ConfigData>>>,
     prior_steps: &HashMap<String, TestStepResult>,
@@ -273,27 +335,45 @@ fn interpolate(
     if !template.contains('$') {
         return Ok(template.to_owned());
     }
-    let re = Regex::new(r"\$[A-Za-z_][A-Za-z0-9_.-]*").unwrap();
-    let mut output = String::with_capacity(template.len());
-    let mut last = 0;
-    for m in re.find_iter(template) {
-        output.push_str(&template[last..m.start()]);
-        let token = m.as_str();
-        let resolved = get_variable(token, config, prior_steps)?;
-        match scalar_to_string(&resolved) {
-            Some(s) => output.push_str(&s),
-            None => {
-                return Err(anyhow!(
-                    "'{}' resolved to a non-string value ({})",
-                    token,
-                    value_type_name(&resolved)
-                ));
+    let mut out = String::with_capacity(template.len());
+    for seg in scan_template(template) {
+        match seg {
+            Segment::Literal(s) => out.push_str(&s),
+            Segment::Ref(key) => {
+                let resolved = get_variable(&key, config, prior_steps)?;
+                let s = scalar_to_string(&resolved).ok_or_else(|| {
+                    anyhow!(
+                        "'{}' resolved to a non-string value ({})",
+                        key,
+                        value_type_name(&resolved)
+                    )
+                })?;
+                out.push_str(&s);
             }
         }
-        last = m.end();
     }
-    output.push_str(&template[last..]);
-    Ok(output)
+    Ok(out)
+}
+
+/// Resolve `template` to a `Value`. `re/...` generates a string. A template that
+/// is exactly one reference preserves the resolved type. A pure literal returns
+/// a string. Mixed text/refs stringify. Used for data values and step-set output.
+pub fn resolve_value(
+    template: &str,
+    config: &Option<Arc<RwLock<ConfigData>>>,
+    prior_steps: &HashMap<String, TestStepResult>,
+) -> Result<Value> {
+    if let Some(pattern) = template.strip_prefix("re/") {
+        return Ok(Value::String(generate_regex_string(pattern)?));
+    }
+    if !template.contains('$') {
+        return Ok(Value::String(template.to_owned()));
+    }
+    let segs = scan_template(template);
+    match segs.as_slice() {
+        [Segment::Ref(key)] => get_variable(key, config, prior_steps),
+        _ => Ok(Value::String(interpolate_string(template, config, prior_steps)?)),
+    }
 }
 
 /// Renders a scalar JSON value as the string to splice into an interpolated
@@ -314,8 +394,8 @@ pub fn clean_headers(
 ) -> Result<HeaderMap> {
     let mut output: HeaderMap = HeaderMap::new();
     for (k, v) in header_data {
-        let resolved =
-            interpolate(v, config, prior_steps).map_err(|e| anyhow!("header '{}': {}", k, e))?;
+        let resolved = interpolate_string(v, config, prior_steps)
+            .map_err(|e| anyhow!("header '{}': {}", k, e))?;
         let name = HeaderName::from_bytes(k.as_bytes())
             .map_err(|e| anyhow!("header '{}': invalid header name — {}", k, e))?;
         let val = HeaderValue::from_str(&resolved).map_err(|e| {
@@ -368,6 +448,23 @@ fn parse_comparison(s: &str) -> Result<Comparison, String> {
     let value: i64 = num_str.parse::<i64>().map_err(|e| e.to_string())?;
 
     Ok(Comparison { op, value })
+}
+
+/// Parse a value comparison like ">=1", "<5", "=0", ">-2.5". Returns None when
+/// `s` is not a comparison expression (so callers fall back to other handling).
+fn parse_value_comparison(s: &str) -> Option<(Operator, f64)> {
+    let re = Regex::new(r"^\s*([<>]=?|=)\s*(-?\d+(?:\.\d+)?)\s*$").ok()?;
+    let caps = re.captures(s.trim())?;
+    let op = match caps.get(1)?.as_str() {
+        ">" => Operator::Gt,
+        ">=" => Operator::Gte,
+        "<" => Operator::Lt,
+        "<=" => Operator::Lte,
+        "=" => Operator::Eq,
+        _ => return None,
+    };
+    let val: f64 = caps.get(2)?.as_str().parse().ok()?;
+    Some((op, val))
 }
 
 pub fn get_value_length(val: &Value) -> Result<i64> {
@@ -424,6 +521,30 @@ pub fn compare_data_objects(
         } else {
             format!("{}.{}", keys.trim_start_matches('.'), key)
         };
+
+        // Presence markers are decided here, where key presence is known.
+        if let Some(marker) = expected.as_str() {
+            if marker == "+exists" || marker == "+absent" {
+                let present = observed_object.contains_key(key);
+                let want_present = marker == "+exists";
+                let passed = present == want_present;
+                assertions.push(AssertionResult {
+                    name: format!("{} ({})", field_path, marker),
+                    passed,
+                    message: if passed {
+                        None
+                    } else if want_present {
+                        Some(format!("missing field '{}' in response", field_path))
+                    } else {
+                        Some(format!("field '{}' must not be present, but it was", field_path))
+                    },
+                });
+                if !passed {
+                    all_passed = false;
+                }
+                continue;
+            }
+        }
 
         let observed = match observed_object.get(key) {
             Some(v) => v,
@@ -595,6 +716,7 @@ pub fn compare_primitive_values(
                 "dict" | "dic" | "dictionary" | "obj" | "object" | "map" => {
                     observed.as_object().is_some()
                 }
+                "null" | "nil" => observed.is_null(),
                 _ => true,
             };
             let name = format!("{} ({})", path, exp_str);
@@ -607,6 +729,7 @@ pub fn compare_primitive_values(
                     "int" | "integer" => "an integer",
                     "bool" | "boolean" => "a boolean",
                     "arr" | "array" | "list" => "an array",
+                    "null" | "nil" => "null",
                     _ => "an object",
                 };
                 assertions.push(AssertionResult {
@@ -665,8 +788,8 @@ pub fn compare_primitive_values(
                     }
                 }
             }
-        } else if exp_str.starts_with('$') {
-            match get_variable(exp_str, config, prior_steps) {
+        } else if exp_str.contains('$') {
+            match resolve_value(exp_str, config, prior_steps) {
                 Ok(exp_var) => {
                     let passed = value_eq(&exp_var, observed);
                     assertions.push(AssertionResult {
@@ -683,6 +806,43 @@ pub fn compare_primitive_values(
                         name: path.to_owned(),
                         passed: false,
                         message: Some(e.to_string()),
+                    });
+                    return false;
+                }
+            }
+        } else if let Some((op, target)) = parse_value_comparison(exp_str) {
+            let name = format!("{} ({})", path, exp_str);
+            match observed.as_f64() {
+                Some(n) => {
+                    let passed = match op {
+                        Operator::Gt => n > target,
+                        Operator::Gte => n >= target,
+                        Operator::Lt => n < target,
+                        Operator::Lte => n <= target,
+                        Operator::Eq => n == target,
+                    };
+                    assertions.push(AssertionResult {
+                        name,
+                        passed,
+                        message: if passed {
+                            None
+                        } else {
+                            Some(format!("'{}' — expected value {}, got {}", path, exp_str, n))
+                        },
+                    });
+                    return passed;
+                }
+                None => {
+                    assertions.push(AssertionResult {
+                        name,
+                        passed: false,
+                        message: Some(format!(
+                            "'{}' — expected a number to compare {}, got {} ({})",
+                            path,
+                            exp_str,
+                            value_type_name(observed),
+                            observed
+                        )),
                     });
                     return false;
                 }
@@ -713,6 +873,52 @@ pub fn compare_primitive_values(
     passed
 }
 
+/// `+exists` membership matcher: passes if at least one element of the observed
+/// array matches the `inner` partial object (all inner field assertions pass).
+fn compare_contains(
+    observed: &Value,
+    inner: &Value,
+    keys: &str,
+    config: &Option<Arc<RwLock<ConfigData>>>,
+    prior_steps: &HashMap<String, TestStepResult>,
+    assertions: &mut Vec<AssertionResult>,
+) -> bool {
+    let path = keys.trim_start_matches('.');
+    let display = if path.is_empty() { "<root>" } else { path };
+    let name = format!("{} (+exists)", display);
+
+    let arr = match observed.as_array() {
+        Some(a) => a,
+        None => {
+            assertions.push(AssertionResult {
+                name,
+                passed: false,
+                message: Some(format!(
+                    "'{}' — expected an array to search for a matching element, got {}",
+                    display,
+                    value_type_name(observed)
+                )),
+            });
+            return false;
+        }
+    };
+
+    for elem in arr {
+        let mut trial: Vec<AssertionResult> = Vec::new();
+        if compare_data_inner(elem, inner, false, "", config, prior_steps, &mut trial) {
+            assertions.push(AssertionResult { name, passed: true, message: None });
+            return true;
+        }
+    }
+
+    assertions.push(AssertionResult {
+        name,
+        passed: false,
+        message: Some(format!("'{}' — no element matched the +exists criteria", display)),
+    });
+    false
+}
+
 pub fn compare_data_inner(
     observed: &Value,
     expected: &Value,
@@ -722,6 +928,15 @@ pub fn compare_data_inner(
     prior_steps: &HashMap<String, TestStepResult>,
     assertions: &mut Vec<AssertionResult>,
 ) -> bool {
+    // A single-key `{+exists: {...}}` map is the array membership matcher.
+    if let Some(obj) = expected.as_object() {
+        if obj.len() == 1 {
+            if let Some(inner) = obj.get("+exists") {
+                return compare_contains(observed, inner, keys, config, prior_steps, assertions);
+            }
+        }
+    }
+
     if let (Some(obs_obj), Some(exp_obj)) = (observed.as_object(), expected.as_object()) {
         compare_data_objects(obs_obj, exp_obj, full, keys, config, prior_steps, assertions)
     } else if let (Some(obs_arr), Some(exp_arr)) = (observed.as_array(), expected.as_array()) {
@@ -900,6 +1115,20 @@ impl TestStepResult {
         }
     }
 
+    /// A synthetic result carrying only output data — used to inject an
+    /// `$args.*` (or similar) namespace into a resolution scope.
+    pub fn from_output(output_data: Value) -> TestStepResult {
+        TestStepResult {
+            step_id: None,
+            status: TestStepFailureReason::NoFailure,
+            response_data: None,
+            request_data: None,
+            output_data: Some(output_data),
+            failure_message: None,
+            assertion_results: Vec::new(),
+        }
+    }
+
     pub fn get_field(&self, keys: &str) -> Result<Option<Value>> {
         let sections: Vec<&str> = keys.split('.').collect();
         let mut current: Option<&Value> = None;
@@ -921,9 +1150,13 @@ impl TestStepResult {
                 };
                 first = false;
             } else {
-                current = current
-                    .and_then(|v| v.as_object())
-                    .and_then(|obj| obj.get(*section));
+                current = current.and_then(|v| match v {
+                    Value::Object(obj) => obj.get(*section),
+                    Value::Array(arr) => {
+                        section.parse::<usize>().ok().and_then(|i| arr.get(i))
+                    }
+                    _ => None,
+                });
             }
         }
         Ok(current.cloned())
@@ -932,6 +1165,9 @@ impl TestStepResult {
 
 impl TestStep {
     fn check_status_code(exp: &Value, actual: u16) -> bool {
+        if let Some(arr) = exp.as_array() {
+            return arr.iter().any(|e| TestStep::check_status_code(e, actual));
+        }
         if let Some(int_val) = exp.as_u64() {
             return int_val == u64::from(actual);
         }
@@ -984,6 +1220,8 @@ impl TestStep {
             header_data = headers;
         }
 
+        let query_data = spec.query.unwrap_or_default();
+
         let mut req_data: Value = Value::Null;
         if let Some(request_data) = spec.data {
             req_data = request_data;
@@ -1010,6 +1248,7 @@ impl TestStep {
             path: spec.path,
             method: TestStep::get_method(spec.method),
             header_data,
+            query_data,
             request_data: req_data,
             expected_response_headers,
             expected_response_data,
@@ -1059,6 +1298,19 @@ impl TestStep {
 
         let full_url = format!("{}{}", url, path);
 
+        // Attach `query:` params with proper percent-encoding. If the path
+        // already carried a query string, these are appended to it.
+        let mut parsed_url = reqwest::Url::parse(&full_url)
+            .map_err(|e| anyhow!("could not parse request URL '{}': {}", full_url, e))?;
+        if !self.query_data.is_empty() {
+            let mut pairs = parsed_url.query_pairs_mut();
+            for (k, v) in &self.query_data {
+                let val = interpolate_string(v, config, prior_steps)
+                    .map_err(|e| anyhow!("query '{}': {}", k, e))?;
+                pairs.append_pair(k, &val);
+            }
+        }
+
         let headers = clean_headers(&self.header_data, config, prior_steps)?;
         let req_data = clean_request_data(&self.request_data, config, prior_steps)?;
         let mut assertions: Vec<AssertionResult> = Vec::new();
@@ -1067,13 +1319,12 @@ impl TestStep {
 
         let t0 = std::time::Instant::now();
 
-        match client
-            .request(self.method.clone(), full_url)
+        let request = client
+            .request(self.method.clone(), parsed_url)
             .headers(headers)
-            .json(&req_data)
-            .send()
-            .await
-        {
+            .json(&req_data);
+
+        match request.send().await {
             Ok(response) => {
                 let actual_status_code = response.status().as_u16();
                 let actual_headers = response_headers_to_value(response.headers());
@@ -1623,6 +1874,76 @@ mod tests {
         assert!(clean_headers(&headers, &no_config(), &no_prior_steps()).is_err());
     }
 
+    // ── interpolation engine ─────────────────────────────────────────────────
+    #[test]
+    fn test_interp_braced_with_surrounding_text() {
+        let cfg = make_config("vars:\n  token: xyz789");
+        let out = interpolate_string("Bearer ${vars.token}", &cfg, &no_prior_steps()).unwrap();
+        assert_eq!(out, "Bearer xyz789");
+    }
+
+    #[test]
+    fn test_interp_bare_ref_still_works() {
+        let cfg = make_config("vars:\n  token: xyz789");
+        let out = interpolate_string("Bearer $vars.token", &cfg, &no_prior_steps()).unwrap();
+        assert_eq!(out, "Bearer xyz789");
+    }
+
+    #[test]
+    fn test_interp_multiple_and_adjacent() {
+        let cfg = make_config("vars:\n  a: A\n  b: B");
+        let out = interpolate_string("${vars.a}-${vars.b}x", &cfg, &no_prior_steps()).unwrap();
+        assert_eq!(out, "A-Bx");
+    }
+
+    #[test]
+    fn test_interp_dollar_escape_and_literal() {
+        let out = interpolate_string("$$5 off $ x", &no_config(), &no_prior_steps()).unwrap();
+        assert_eq!(out, "$5 off $ x");
+    }
+
+    #[test]
+    fn test_interp_bare_does_not_grab_trailing_dot() {
+        let mut prior = no_prior_steps();
+        prior.insert("s".to_owned(), make_step_result("s", json!({"v": "hi"}), json!(null)));
+        let out = interpolate_string("$s.response.v.", &no_config(), &prior).unwrap();
+        assert_eq!(out, "hi.");
+    }
+
+    #[test]
+    fn test_resolve_value_whole_ref_preserves_int() {
+        let mut prior = no_prior_steps();
+        prior.insert("s".to_owned(), make_step_result("s", json!({"id": 42}), json!(null)));
+        let v = resolve_value("$s.response.id", &no_config(), &prior).unwrap();
+        assert_eq!(v, json!(42));
+    }
+
+    #[test]
+    fn test_resolve_value_mixed_stringifies() {
+        let mut prior = no_prior_steps();
+        prior.insert("s".to_owned(), make_step_result("s", json!({"id": 42}), json!(null)));
+        let v = resolve_value("id=${s.response.id}", &no_config(), &prior).unwrap();
+        assert_eq!(v, json!("id=42"));
+    }
+
+    #[test]
+    fn test_resolve_value_literal_and_regex() {
+        let plain = resolve_value("hello", &no_config(), &no_prior_steps()).unwrap();
+        assert_eq!(plain, json!("hello"));
+        let generated = resolve_value("re/[0-9]{3}", &no_config(), &no_prior_steps()).unwrap();
+        assert!(generated.as_str().unwrap().chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn test_interp_non_scalar_errors() {
+        let mut prior = no_prior_steps();
+        prior.insert(
+            "s".to_owned(),
+            make_step_result("s", json!({"obj": {"a": 1}}), json!(null)),
+        );
+        assert!(interpolate_string("x${s.response.obj}", &no_config(), &prior).is_err());
+    }
+
     #[test]
     fn test_clean_headers_inline_interpolation_from_config() {
         let cfg = make_config("vars:\n  token: xyz789");
@@ -1782,6 +2103,51 @@ mod tests {
         assert_eq!(result, json!({"user": "alice"}));
     }
 
+    #[test]
+    fn test_clean_request_data_inline_braced() {
+        let mut prior = no_prior_steps();
+        prior.insert("s".to_owned(), make_step_result("s", json!({"id": 7}), json!(null)));
+        let out = clean_request_data(&json!({"note": "id=${s.response.id}"}), &no_config(), &prior)
+            .unwrap();
+        assert_eq!(out, json!({"note": "id=7"}));
+    }
+
+    #[test]
+    fn test_clean_request_data_whole_ref_keeps_type() {
+        let mut prior = no_prior_steps();
+        prior.insert("s".to_owned(), make_step_result("s", json!({"id": 7}), json!(null)));
+        let out = clean_request_data(&json!({"uid": "$s.response.id"}), &no_config(), &prior)
+            .unwrap();
+        assert_eq!(out, json!({"uid": 7}));
+    }
+
+    #[test]
+    fn test_clean_path_braced_variable() {
+        let mut prior = no_prior_steps();
+        prior.insert("c".to_owned(), make_step_result("c", json!({"id": 42}), json!(null)));
+        let out = clean_path("items/${c.response.id}", &no_config(), &prior).unwrap();
+        assert_eq!(out, "/items/42");
+    }
+
+    #[test]
+    fn test_assertion_expected_braced_ref() {
+        let mut prior = no_prior_steps();
+        prior.insert(
+            "s".to_owned(),
+            make_step_result("s", json!({"name": "alice"}), json!(null)),
+        );
+        let mut a = vec![];
+        compare_primitive_values(
+            &json!("alice"),
+            &json!("${s.response.name}"),
+            "field",
+            &no_config(),
+            &prior,
+            &mut a,
+        );
+        assert!(a.iter().all(|x| x.passed), "{:?}", a);
+    }
+
     // ── get_variable ─────────────────────────────────────────────────────────
 
     #[test]
@@ -1905,6 +2271,79 @@ mod tests {
     fn test_compare_primitive_type_float_pass() {
         let r = run_assert(json!(3.14), json!("+float"));
         assert!(r[0].passed);
+    }
+
+    // ── presence markers (+exists / +absent / +null) ─────────────────────────
+    #[test]
+    fn test_presence_exists_pass_absent_pass() {
+        let pass = run_compare_objects(json!({"email": "a@b.c"}), json!({"email": "+exists"}), false);
+        assert!(pass.iter().all(|a| a.passed), "{:?}", pass);
+        let pass2 = run_compare_objects(json!({"name": "x"}), json!({"secret": "+absent"}), false);
+        assert!(pass2.iter().all(|a| a.passed), "{:?}", pass2);
+    }
+
+    #[test]
+    fn test_presence_exists_fail_absent_fail() {
+        let fail1 = run_compare_objects(json!({"name": "x"}), json!({"email": "+exists"}), false);
+        assert!(fail1.iter().any(|a| !a.passed));
+        let fail2 = run_compare_objects(json!({"secret": "s"}), json!({"secret": "+absent"}), false);
+        assert!(fail2.iter().any(|a| !a.passed));
+    }
+
+    #[test]
+    fn test_null_marker() {
+        let pass = run_compare_objects(json!({"ends_at": null}), json!({"ends_at": "+null"}), false);
+        assert!(pass.iter().all(|a| a.passed), "{:?}", pass);
+        let fail = run_compare_objects(json!({"ends_at": "2020"}), json!({"ends_at": "+null"}), false);
+        assert!(fail.iter().any(|a| !a.passed));
+    }
+
+    // ── +exists array membership matcher ─────────────────────────────────────
+    #[test]
+    fn test_contains_matcher_pass() {
+        let observed = json!({"items": [{"id": 1, "title": "a"}, {"id": 2, "title": "b"}]});
+        let expected = json!({"items": {"+exists": {"id": 2, "title": "+str"}}});
+        let asserts = run_compare_objects(observed, expected, false);
+        assert!(asserts.iter().all(|a| a.passed), "{:?}", asserts);
+    }
+
+    #[test]
+    fn test_contains_matcher_fail_no_match() {
+        let observed = json!({"items": [{"id": 1}, {"id": 2}]});
+        let expected = json!({"items": {"+exists": {"id": 99}}});
+        let asserts = run_compare_objects(observed, expected, false);
+        assert!(asserts.iter().any(|a| !a.passed));
+    }
+
+    #[test]
+    fn test_contains_matcher_fail_not_array() {
+        let observed = json!({"items": {"id": 1}});
+        let expected = json!({"items": {"+exists": {"id": 1}}});
+        let asserts = run_compare_objects(observed, expected, false);
+        assert!(asserts.iter().any(|a| !a.passed));
+    }
+
+    // ── numeric value comparisons ────────────────────────────────────────────
+    #[test]
+    fn test_value_comparison_pass_and_fail() {
+        let pass = run_assert(json!(5), json!(">=1"));
+        assert!(pass.iter().all(|a| a.passed), "{:?}", pass);
+        let fail = run_assert(json!(0), json!(">=1"));
+        assert!(fail.iter().any(|a| !a.passed));
+    }
+
+    #[test]
+    fn test_value_comparison_float_and_negative() {
+        let pass = run_assert(json!(3.5), json!("<5"));
+        assert!(pass.iter().all(|a| a.passed), "{:?}", pass);
+        let pass2 = run_assert(json!(-2), json!(">=-3"));
+        assert!(pass2.iter().all(|a| a.passed), "{:?}", pass2);
+    }
+
+    #[test]
+    fn test_value_comparison_non_number_fails() {
+        let fail = run_assert(json!("hello"), json!(">=1"));
+        assert!(fail.iter().any(|a| !a.passed));
     }
 
     #[test]
@@ -2130,6 +2569,17 @@ mod tests {
     }
 
     #[test]
+    fn test_status_code_list_matches_any() {
+        assert!(TestStep::check_status_code(&json!([200, 201]), 201));
+        assert!(TestStep::check_status_code(&json!([200, "4xx"]), 404));
+    }
+
+    #[test]
+    fn test_status_code_list_no_match() {
+        assert!(!TestStep::check_status_code(&json!([200, 201]), 500));
+    }
+
+    #[test]
     fn test_check_status_code_wildcard_mismatch() {
         assert!(!TestStep::check_status_code(&json!("4xx"), 200));
         assert!(!TestStep::check_status_code(&json!("20x"), 404));
@@ -2189,6 +2639,18 @@ mod tests {
             assertion_results: vec![],
         };
         assert_eq!(result.get_field("token").unwrap(), Some(json!("abc")));
+    }
+
+    #[test]
+    fn test_get_field_array_index() {
+        let r = make_step_result("s", json!({"items": [{"id": 10}, {"id": 20}]}), json!(null));
+        assert_eq!(r.get_field("response.items.1.id").unwrap(), Some(json!(20)));
+    }
+
+    #[test]
+    fn test_get_field_array_index_out_of_range_none() {
+        let r = make_step_result("s", json!({"items": [{"id": 10}]}), json!(null));
+        assert_eq!(r.get_field("response.items.5.id").unwrap(), None);
     }
 
     // ── push_duration_assertion ──────────────────────────────────────────────
@@ -2373,6 +2835,21 @@ mod tests {
         let spec: TestStepSpec = serde_yaml::from_str(yaml).unwrap();
         let step = TestStep::from_spec(spec);
         assert_eq!(step.retry, 5);
+    }
+
+    #[test]
+    fn test_from_output_field_lookup() {
+        let r = TestStepResult::from_output(json!({"email": "a@b.c"}));
+        assert_eq!(r.get_field("email").unwrap(), Some(json!("a@b.c")));
+    }
+
+    #[test]
+    fn test_query_field_parses() {
+        let spec: TestStepSpec =
+            serde_yaml::from_str("path: /search\nquery:\n  q: hello\n  page: \"2\"").unwrap();
+        let step = TestStep::from_spec(spec);
+        assert_eq!(step.query_data.get("q").map(String::as_str), Some("hello"));
+        assert_eq!(step.query_data.get("page").map(String::as_str), Some("2"));
     }
 
     // ── failed assertion propagates as ResponseError ──────────────────────────

@@ -210,6 +210,16 @@ output:
   id:       $create-user.response.id
 ```
 
+Output values use the same [interpolation forms](./Tests.md#syntax) as the rest
+of yapitest, so they can compose literal text with references and keep the
+resolved type for whole-value references:
+
+```yaml
+output:
+  auth-header: "Bearer $create-user.response.token"   # inline, becomes a string
+  id:          $create-user.response.id               # stays an integer
+```
+
 Output keys are referenced as:
 
 - `$setup.<key>` — when the step-set is used as `setup:`
@@ -236,6 +246,48 @@ test-get-profile:
         body:
           name: $setup.username
 ```
+
+#### Parameterized setup (`args`)
+
+Instead of a bare name, `setup` (and `teardown`) may be a map with `name` and
+`args`. Each arg is resolved in the calling test's scope and exposed inside the
+step-set as `$args.<key>`. This replaces writing one near-identical step-set per
+case (e.g. `login-alice`, `login-bob`):
+
+```yaml
+test-login-as-alice:
+  setup:
+    name: login
+    args:
+      username: alice@example.com
+      password: $vars.alice-password
+  steps:
+    - path: /api/user/whoami
+      headers:
+        Authorization: "Bearer ${setup.token}"
+      assert:
+        body:
+          name: alice@example.com
+```
+
+```yaml
+# the shared, parameterized step-set:
+step-sets:
+  login:
+    once: false        # parameterized invocations always run fresh
+    steps:
+      - id: do-login
+        path: /api/user/login
+        method: POST
+        data:
+          username: $args.username
+          password: $args.password
+    output:
+      token: $do-login.response.token
+```
+
+A parameterized invocation always runs fresh, ignoring `once: true`, because
+different args produce different results.
 
 ### As `teardown`
 

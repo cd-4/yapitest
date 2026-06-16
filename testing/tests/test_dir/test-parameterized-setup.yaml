@@ -1,0 +1,47 @@
+test-login-as-alice:
+  setup:
+    name: login
+    args:
+      username: alice-param-001
+      password: alicepass!
+  steps:
+    - path: /api/user/whoami
+      method: GET
+      headers:
+        Authorization: "Bearer ${setup.token}"
+      assert:
+        status-code: 200
+        body:
+          name: alice-param-001
+
+test-login-as-bob:
+  setup:
+    name: login
+    args:
+      username: bob-param-002
+      password: bobpass!
+  steps:
+    - path: /api/user/whoami
+      method: GET
+      headers:
+        Authorization: "Bearer ${setup.token}"
+      assert:
+        status-code: 200
+        body:
+          name: bob-param-002
+
+# designed to fail: asserts the wrong user for the supplied args
+test-login-args-wrong-user-fail:
+  setup:
+    name: login
+    args:
+      username: carol-param-003
+      password: carolpass!
+  steps:
+    - path: /api/user/whoami
+      method: GET
+      headers:
+        Authorization: "Bearer ${setup.token}"
+      assert:
+        body:
+          name: not-carol

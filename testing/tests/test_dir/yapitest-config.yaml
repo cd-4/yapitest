@@ -14,3 +14,22 @@ step-sets:
       password: $create-user.data.password
       token: $create-user.response.token
 
+  login:
+    once: false
+    steps:
+      - id: do-create
+        path: /api/user/create
+        method: POST
+        data:
+          username: $args.username
+          password: $args.password
+      - id: do-login
+        path: /api/user/login
+        method: POST
+        data:
+          username: $args.username
+          password: $args.password
+    output:
+      token: $do-login.response.token
+      username: $args.username
+

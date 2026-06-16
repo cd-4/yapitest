@@ -83,3 +83,17 @@ test-header-inline-wrong-scheme-fail:
         Authorization: "Token $setup.token"
       assert:
         status-code: 200
+
+# Delimited ${} form with surrounding text (Phase 1 engine).
+test-header-braced-bearer-from-setup:
+  setup: create-user
+  steps:
+    - path: /api/user/whoami
+      method: GET
+      headers:
+        Authorization: "Bearer ${setup.token}"
+      assert:
+        status-code: 200
+        body:
+          name: ${setup.username}
+          id: +int

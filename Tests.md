@@ -187,6 +187,20 @@ headers:
   X-Request-ID: $vars.request-id
 ```
 
+#### `query` *(optional)*
+
+A map of query-string parameters. Values may be variable references and are
+percent-encoded automatically, so this is the recommended way to pass query
+params (rather than writing them into `path`, where encoding is undefined). If
+`path` already contains a `?…` query string, these entries are appended to it.
+
+```yaml
+- path: /api/user/search
+  query:
+    q: $setup.username
+    page: "2"
+```
+
 #### `data` *(optional)*
 
 The JSON body to send with the request. Nested maps and arrays are supported. String values may be variable references.
@@ -261,13 +275,48 @@ retry: 3    # up to 4 total attempts (1 initial + 3 retries)
 
 ## Variables
 
-Any string value starting with `$` is treated as a variable reference and resolved before the request is sent. References work in `path` segments, `url`, `headers` values, `data` values at any depth, and assertion `body` or `headers` expected values.
+Variable references are resolved before the request is sent. References work in `path`, `url`, `headers` values, `data` values at any depth, assertion `body`/`headers` expected values, query values, and step-set `output` values.
 
 ### Syntax
 
+A reference is written in one of two forms:
+
 ```
-$<namespace>.<key>[.<nested-key>...]
+$<namespace>.<key>[.<nested-key>...]      # bare
+${<namespace>.<key>[.<nested-key>...]}    # delimited
 ```
+
+Both forms resolve identically. References may appear **inline**, surrounded by
+other text, and more than once in a value:
+
+```yaml
+headers:
+  Authorization: "Bearer ${setup.token}"   # delimited, with a literal prefix
+  X-Trace: "$vars.region-$run.response.id"  # two bare refs plus literal text
+```
+
+The delimited `${...}` form is useful when a reference is immediately followed by
+text that would otherwise be read as part of the key (e.g. `${vars.id}-suffix`).
+
+- A bare `$` not followed by a valid identifier (letter or `_`, then
+  letters/digits/`_`/`.`/`-`) is left literal — `"$5 off"` stays `"$5 off"`.
+- Write `$$` to emit a literal `$`.
+
+#### Type preservation
+
+When a `data` or step-set `output` value is **exactly one** reference with no
+surrounding text, the resolved value keeps its JSON type:
+
+```yaml
+data:
+  user_id: $reg.response.id     # stays an integer
+  active: ${vars.is_active}     # stays a boolean
+```
+
+When a reference is mixed with literal text or other references, the result is a
+string (`"id=$reg.response.id"` → `"id=42"`). Header, path, and query values are
+always strings. A reference that resolves to an object or array cannot be spliced
+into a string and raises an error.
 
 ### `$vars.<name>`
 
@@ -352,6 +401,38 @@ steps:
       API-Token: $create-user.token
 ```
 
+### `$args.<key>`
+
+Inside a [parameterized step-set](./Configs.md#parameterized-step-sets), the
+arguments passed by the caller are available as `$args.<key>`. This namespace
+exists only within the step-set's own steps and `output`.
+
+```yaml
+data:
+  username: $args.username
+  password: $args.password
+```
+
+### Array indexing
+
+A numeric segment in a reference path indexes into an array. This works anywhere
+a reference is navigated — paths, data, assertion-expected values, and step-set
+output:
+
+```yaml
+- id: list
+  path: /api/post/list           # response: {"posts": [{"id": 7}, ...]}
+
+- path: /api/post/$list.response.posts.0.id    # → /api/post/7
+  assert:
+    body:
+      id: $list.response.posts.0.id             # the same indexed value
+```
+
+Out-of-range indices resolve to "not found" (the same as a missing field). To
+assert that *some* element matches without knowing its position, use the
+[`+exists` membership matcher](#array-membership-exists) instead.
+
 ### Resolution order
 
 When a reference like `$foo.bar` is encountered, yapitest resolves it in this order:
@@ -399,6 +480,15 @@ assert:
   status-code: 2xx    # matches 200–299
 ```
 
+**List match** — pass if the actual code equals any element (exact codes and
+wildcards may be mixed):
+
+```yaml
+assert:
+  status-code: [200, 201]
+  status-code: [200, "4xx"]
+```
+
 ---
 
 ### `body`
@@ -439,6 +529,7 @@ Use `+type` to assert that a field exists and has the correct type, without chec
 | `+bool` or `+boolean` | Boolean |
 | `+arr`, `+array`, or `+list` | Array |
 | `+dict`, `+dic`, `+dictionary`, or `+map` | Object |
+| `+null` or `+nil` | JSON `null` (field present and null) |
 
 ```yaml
 assert:
@@ -449,7 +540,58 @@ assert:
     metadata: +dict
     score: +float
     active: +bool
+    ends_at: +null
 ```
+
+#### Presence assertions (`+exists` / `+absent`)
+
+Assert whether a field is present, independent of its value. Useful for security
+contracts ("the public profile must not leak `password_hash`") without listing
+every field via `full: true`.
+
+```yaml
+assert:
+  body:
+    email: +exists        # must be present (any value, including null)
+    password_hash: +absent  # must NOT be present
+```
+
+`+null` is stricter than `+exists`: the field must be present **and** JSON null.
+
+#### Numeric value comparisons
+
+An expected value written as a comparison expression checks the field's **number**
+(not its length). Same operators as `len(...)`: `=`, `>=`, `<=`, `>`, `<`.
+
+```yaml
+assert:
+  body:
+    capacity: ">=1"
+    price_cents: ">=0"
+    discount: "<100"
+```
+
+A comparison-shaped string is always interpreted as a numeric comparison; if the
+field is not a number the assertion fails.
+
+#### Array membership (`+exists`)
+
+To assert that an array contains at least one element matching a partial object,
+use `+exists` as a single-key map under the array field. Inner fields use the
+full assertion vocabulary (exact, `+type`, variable refs, etc.).
+
+```yaml
+assert:
+  body:
+    posts:
+      +exists:
+        id: ${new-post.response.post_id}
+        title: +str
+```
+
+Passes if **some** element matches all inner field assertions. To pull a specific
+element's value out by position, index it in a [variable reference](#syntax)
+instead (`$list.response.posts.0.id`).
 
 #### Variable references
 

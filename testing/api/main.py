@@ -165,6 +165,22 @@ def whoami():
     return USERS_BY_TOKEN[token].to_json()
 
 
+@app.route("/api/user/search", methods=["GET"])
+def search_users():
+    q = request.args.get("q", "")
+    matches = [u.to_json() for u in USERS_BY_ID.values() if q and q in u.name]
+    return {"query": q, "results": matches}
+
+
+@app.route("/api/user/<username>/public", methods=["GET"])
+def public_profile(username):
+    if username not in USERS_BY_USERNAME:
+        return jsonify({"error": "User not found"}), 404
+    user = USERS_BY_USERNAME[username]
+    # Public view: no token/password; ends_at is intentionally null.
+    return {"name": user.name, "id": user.id, "ends_at": None}
+
+
 @app.route("/api/user/<username>", methods=["GET"])
 def get_user(username):
     if username not in USERS_BY_USERNAME:
