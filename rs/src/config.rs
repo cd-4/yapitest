@@ -1,4 +1,4 @@
-use crate::test_step::{RunnableTestStep, TestStep, TestStepResult, TestStepSpec};
+use crate::test_step::{resolve_value, RunnableTestStep, TestStep, TestStepResult, TestStepSpec};
 use anyhow::{Error, Result, anyhow};
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -67,14 +67,22 @@ impl TestStepGroup {
         &self,
         config: &Option<Arc<RwLock<ConfigData>>>,
         prior_steps: &HashMap<String, TestStepResult>,
+        args: Option<serde_json::Value>,
     ) -> Result<TestStepResult> {
+        // Scope visible to the step-set's steps: the caller's prior steps plus
+        // an optional `$args.*` namespace from a parameterized invocation.
+        let mut scope: HashMap<String, TestStepResult> = prior_steps.clone();
+        if let Some(args_val) = &args {
+            scope.insert("args".to_owned(), TestStepResult::from_output(args_val.clone()));
+        }
+
         // Run Steps
-        let mut local_steps: HashMap<&str, TestStepResult> = HashMap::new();
+        let mut local_steps: HashMap<String, TestStepResult> = HashMap::new();
         for step in self.steps.iter() {
-            match step.run(config, prior_steps).await {
+            match step.run(config, &scope).await {
                 Ok(result) => {
                     if let Some(id) = step.get_id() {
-                        local_steps.insert(id.as_str(), result);
+                        local_steps.insert(id.to_string(), result);
                     }
                 }
                 Err(e) => {
@@ -84,48 +92,23 @@ impl TestStepGroup {
             }
         }
 
-        // Process Outputs
+        // Output values resolve against the step-set's own steps plus `$args`.
+        let mut output_scope = local_steps.clone();
+        if let Some(args_val) = &args {
+            output_scope.insert("args".to_owned(), TestStepResult::from_output(args_val.clone()));
+        }
+
+        // Process Outputs via the shared interpolation engine, so output values
+        // support inline refs (`Bearer $login.response.token`) and literals.
         let mut outputs: HashMap<&str, serde_json::Value> = HashMap::new();
 
         for (output_key, output_value) in self.outputs.iter() {
-            if output_value.starts_with('$') {
-                let rest = &output_value[1..];
-                let mut output_sections: Vec<&str> = rest.split('.').collect();
-
-                let step_id = match output_sections.first() {
-                    Some(v) => *v,
-                    None => {
-                        return Err(anyhow!(
-                            "output '{}': '{}' is not a valid step reference — expected '$<step-id>.<field>'",
-                            output_key,
-                            output_value
-                        ));
-                    }
-                };
-
-                if let Some(step) = local_steps.get(step_id) {
-                    output_sections.remove(0);
-                    let field_key = output_sections.join(".");
-                    if let Ok(val) = step.get_field(&field_key) {
-                        if let Some(yaml_val) = val {
-                            if let Ok(v) = serde_json::from_value(yaml_val) {
-                                outputs.insert(output_key.as_str(), v);
-                                continue;
-                            }
-                        }
-                        return Err(anyhow!(
-                            "output '{}': field '{}' not found in step '{}'",
-                            output_key,
-                            field_key,
-                            step_id,
-                        ));
-                    }
-                } else {
-                    return Err(anyhow!(
-                        "output '{}' references step '{}', but no step with that id was found",
-                        output_key,
-                        step_id
-                    ));
+            match resolve_value(output_value, config, &output_scope) {
+                Ok(v) => {
+                    outputs.insert(output_key.as_str(), v);
+                }
+                Err(e) => {
+                    return Err(anyhow!("output '{}': {}", output_key, e));
                 }
             }
         }
@@ -137,6 +120,21 @@ impl TestStepGroup {
             serde_json::to_value(outputs)?,
         );
         Ok(result)
+    }
+
+    /// Run the step-set, optionally injecting an `$args.*` namespace. A
+    /// parameterized invocation (args present) bypasses the once-cache, since
+    /// different args produce different results.
+    pub async fn run_with_args(
+        &self,
+        config: &Option<Arc<RwLock<ConfigData>>>,
+        prior_steps: &HashMap<String, TestStepResult>,
+        args: Option<serde_json::Value>,
+    ) -> Result<TestStepResult> {
+        if args.is_some() {
+            return self.run_internal(config, prior_steps, args).await;
+        }
+        self.run(config, prior_steps).await
     }
 }
 
@@ -344,6 +342,42 @@ mod tests {
         ConfigData::from_val(val, &test_path()).unwrap()
     }
 
+    // ── step-set output resolution ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_step_set_args_resolve_in_output() {
+        // With no steps, an output referencing `$args.email` must resolve from
+        // the injected args scope.
+        let cfg = make_config(
+            "step-sets:\n  echo:\n    once: false\n    output:\n      who: $args.email\n    steps: []",
+        );
+        let group = cfg.get_step_group("echo").unwrap();
+        let args = serde_json::json!({"email": "alice@example.com"});
+        let result = group
+            .run_with_args(&None, &HashMap::new(), Some(args))
+            .await
+            .unwrap();
+        assert_eq!(
+            result.get_field("who").unwrap(),
+            Some(serde_json::json!("alice@example.com"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_step_set_literal_output_resolves() {
+        // A literal (non-`$`) output value is resolved via the interpolation
+        // engine; the old `$`-only loop skipped it entirely.
+        let cfg = make_config(
+            "step-sets:\n  greet:\n    once: false\n    output:\n      greeting: hello\n    steps: []",
+        );
+        let group = cfg.get_step_group("greet").unwrap();
+        let result = group
+            .run_internal(&None, &HashMap::new(), None)
+            .await
+            .unwrap();
+        assert_eq!(result.get_field("greeting").unwrap(), Some(serde_json::json!("hello")));
+    }
+
     // ── get_string_value ─────────────────────────────────────────────────────
 
     #[test]
@@ -462,7 +496,7 @@ impl RunnableTestStep for TestStepGroup {
         let test_group_id = self.get_group_id();
 
         if !self.runs_once() {
-            return self.run_internal(config, prior_steps).await;
+            return self.run_internal(config, prior_steps, None).await;
         }
 
         if let Some(result) = GROUP_TEST_RESULTS.get(&test_group_id) {
@@ -481,7 +515,7 @@ impl RunnableTestStep for TestStepGroup {
             return Ok(result.value().clone());
         }
 
-        let result = self.run_internal(config, prior_steps).await?;
+        let result = self.run_internal(config, prior_steps, None).await?;
 
         GROUP_TEST_RESULTS.insert(test_group_id, result.clone());
 

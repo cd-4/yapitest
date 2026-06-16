@@ -211,6 +211,16 @@ output:
   id:       $create-user.response.id
 ```
 
+Output values use the full [interpolation syntax](variables.md#syntax), so they
+can compose literal text with references and keep the resolved type for
+whole-value references:
+
+```yaml
+output:
+  auth-header: "Bearer $create-user.response.token"   # inline → a string
+  id:          $create-user.response.id               # whole-value → stays an integer
+```
+
 Output keys are referenced as:
 
 - `$setup.<key>` — when the step-set is used as `setup:`
@@ -237,6 +247,45 @@ test-get-profile:
         body:
           name: $setup.username
 ```
+
+#### Parameterized step-sets (`args`)
+
+Instead of a bare name, `setup` (and `teardown`) may be a map with `name` and `args`. Each arg is resolved in the calling test's scope and exposed inside the step-set as `$args.<key>`. This lets one step-set serve many cases — instead of writing near-identical `login-alice`, `login-bob`, `login-carol` step-sets:
+
+```yaml
+# the shared, parameterized step-set:
+step-sets:
+  login:
+    once: false        # parameterized invocations always run fresh (see below)
+    steps:
+      - id: do-login
+        path: /api/user/login
+        method: POST
+        data:
+          username: $args.username
+          password: $args.password
+    output:
+      token: $do-login.response.token
+```
+
+```yaml
+# a test that supplies args:
+test-login-as-alice:
+  setup:
+    name: login
+    args:
+      username: alice@example.com
+      password: $vars.alice-password    # args resolve in the caller's scope
+  steps:
+    - path: /api/user/whoami
+      headers:
+        Authorization: "Bearer ${setup.token}"
+      assert:
+        body:
+          name: alice@example.com
+```
+
+A parameterized invocation always runs fresh, ignoring `once: true`, because different args are expected to produce different results.
 
 ### As `teardown`
 

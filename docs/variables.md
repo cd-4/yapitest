@@ -1,14 +1,15 @@
 # Variables
 
-Variables let you pass data between steps, reference config values, and keep tests DRY. Any string value starting with `$` is treated as a variable reference and resolved before the request is made.
+Variables let you pass data between steps, reference config values, and keep tests DRY. A variable reference is resolved before the request is made.
 
-Variable references work in:
+Variable references work everywhere a string can appear:
 
-- Step `path` segments
+- Step `path`
 - Step `url`
 - Step `headers` values
+- Step `query` values
 - Step `data` values (at any nesting depth)
-- Assertion `body` expected values
+- Assertion `body` and `headers` expected values
 - Config `urls` values
 - Step-set `output` values
 
@@ -16,11 +17,56 @@ Variable references work in:
 
 ## Syntax
 
+A reference is written in one of two interchangeable forms:
+
 ```
-$<namespace>.<key>[.<nested-key>...]
+$<namespace>.<key>[.<nested-key>...]      # bare
+${<namespace>.<key>[.<nested-key>...]}    # delimited
 ```
 
-Keys are dot-separated and resolve into nested objects. For example, `$login.response.user.id` navigates `response` → `user` → `id` from the step named `login`.
+Keys are dot-separated and resolve into nested objects. For example,
+`$login.response.user.id` navigates `response` → `user` → `id` from the step
+named `login`.
+
+### Inline references
+
+References may appear **inline**, surrounded by literal text, and more than once
+in a single value:
+
+```yaml
+headers:
+  Authorization: "Bearer ${setup.token}"      # delimited, with a literal prefix
+  X-Trace: "$vars.region-$run.response.id"     # two bare refs plus literal text
+```
+
+Use the delimited `${...}` form when a reference is immediately followed by text
+that would otherwise be read as part of the key:
+
+```yaml
+data:
+  slug: "${vars.name}-final"     # without braces, "-final" would join the key
+```
+
+- A bare `$` not followed by a valid identifier (a letter or `_`, then
+  letters/digits/`_`/`.`/`-`) is left literal — `"$5 off"` stays `"$5 off"`.
+- Write `$$` to emit a single literal `$`.
+
+### Type preservation
+
+When a `data` or step-set `output` value is **exactly one** reference with no
+surrounding text, the resolved value keeps its JSON type:
+
+```yaml
+data:
+  user_id: $reg.response.id      # stays an integer
+  active: ${vars.is_active}      # stays a boolean
+  profile: $reg.response.user    # stays an object
+```
+
+When a reference is combined with literal text or other references, the result
+is a string (`"id=$reg.response.id"` → `"id=42"`). Header, `path`, and `query`
+values are always strings; a reference there that resolves to an object or array
+raises an error.
 
 ---
 
@@ -109,6 +155,23 @@ steps:
       API-Token: $create-user.token
 ```
 
+### `$args.<key>`
+
+Inside a [parameterized step-set](config.md#parameterized-step-sets-args), the
+arguments passed by the caller are available as `$args.<key>`. This namespace
+only exists within the step-set's own steps and `output`.
+
+```yaml
+step-sets:
+  login:
+    steps:
+      - path: /api/user/login
+        method: POST
+        data:
+          username: $args.username
+          password: $args.password
+```
+
 ---
 
 ## Resolution order
@@ -125,12 +188,38 @@ If none of these match, an error is thrown and the test fails immediately.
 
 ## Variables in paths
 
-Variables in path segments are resolved per `/`-delimited segment. The resolved value must be a string or integer; other types cause an error.
+Path references resolve inline; the bare and `${}` forms both work, and a
+reference may sit next to literal path text. The resolved value is converted to a
+string (numbers and booleans are stringified); a reference that resolves to an
+object or array raises an error.
 
 ```yaml
 path: /api/user/$setup.username
-path: /api/post/$new-post.response.id    # integer — converted to string automatically
+path: /api/post/$new-post.response.id    # integer — stringified automatically
+path: /api/v${vars.api-version}/status   # ${} so the digit doesn't join the key
 ```
+
+---
+
+## Array indexing
+
+A numeric path segment indexes into an array. This works anywhere a reference is
+navigated — paths, data, assertion-expected values, and step-set output:
+
+```yaml
+- id: list
+  path: /api/post/list           # response: {"posts": [{"id": 7}, ...]}
+
+- path: /api/post/$list.response.posts.0.id   # → /api/post/7
+  assert:
+    body:
+      id: $list.response.posts.0.id            # the same indexed value
+```
+
+Out-of-range indices resolve to "not found" (the same as a missing field).
+
+> To assert that *some* element of an array matches without knowing its position,
+> use the [`+exists` membership matcher](tests.md#array-membership-exists) instead.
 
 ---
 

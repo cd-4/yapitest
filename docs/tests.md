@@ -176,13 +176,26 @@ method: POST    # GET, PUT, PATCH, DELETE, etc.
 
 #### `headers` *(optional)*
 
-A map of header names to values. Values may be variable references.
+A map of header names to values. Values may contain [variable references](variables.md), including inline (`Bearer ${setup.token}`).
 
 ```yaml
 headers:
   API-Token: $setup.token
+  Authorization: "Bearer ${setup.token}"
   Accept: application/json
   X-Request-ID: $vars.request-id
+```
+
+#### `query` *(optional)*
+
+A map of query-string parameters. Values may contain variable references and are percent-encoded automatically, so this is the recommended way to pass query parameters — rather than writing them into `path`, where encoding is undefined. If `path` already contains a `?…` query string, these entries are appended to it.
+
+```yaml
+- path: /api/user/search
+  query:
+    q: $setup.username
+    page: "2"
+    sort: created_at
 ```
 
 #### `data` *(optional)*
@@ -285,6 +298,14 @@ assert:
   status-code: 2xx    # matches 200–299
 ```
 
+**List match** — pass if the actual code equals any element. Exact codes and wildcards can be mixed, which is handy for endpoints with more than one acceptable outcome:
+
+```yaml
+assert:
+  status-code: [200, 201]
+  status-code: [200, "4xx"]
+```
+
 ---
 
 ### `body`
@@ -325,6 +346,7 @@ Use `+type` to assert a field exists and has the correct type, without checking 
 | `+bool` or `+boolean` | Boolean |
 | `+arr`, `+array`, or `+list` | Array |
 | `+dict`, `+dic`, `+dictionary`, or `+map` | Object |
+| `+null` or `+nil` | JSON `null` (field present **and** null) |
 
 ```yaml
 assert:
@@ -335,11 +357,25 @@ assert:
     metadata: +dict
     score: +float
     active: +bool
+    ends_at: +null
 ```
+
+#### Presence assertions (`+exists` / `+absent`)
+
+Assert whether a field is present, independent of its value. Useful for security-contract tests ("the public profile must not leak `password_hash`") without having to enumerate every field with [`full`](#full).
+
+```yaml
+assert:
+  body:
+    email: +exists          # must be present (any value, including null)
+    password_hash: +absent  # must NOT be present
+```
+
+`+null` is stricter than `+exists`: the field must be present **and** JSON null.
 
 #### Variable references
 
-An expected value can be a variable reference. The response field must equal the resolved value.
+An expected value can be a [variable reference](variables.md) (bare or `${}`, inline or whole-value). The response field must equal the resolved value.
 
 ```yaml
 assert:
@@ -347,6 +383,7 @@ assert:
     username: $setup.username
     role: $vars.expected-role
     post_id: $create-post.response.id
+    greeting: "Hello, ${setup.username}"
 ```
 
 #### Regex assertions
@@ -379,6 +416,41 @@ assert:
 ```
 
 Supported operators: `=`, `>=`, `<=`, `>`, `<`.
+
+#### Numeric value comparisons
+
+An expected value written as a comparison expression checks the field's
+**numeric value** (not its length). Same operators as `len(...)`:
+
+```yaml
+assert:
+  body:
+    capacity: '>=1'
+    price_cents: '>=0'
+    discount: '<100'
+```
+
+A comparison-shaped string is always interpreted as a numeric comparison; if the
+field is not a number, the assertion fails.
+
+#### Array membership (`+exists`)
+
+To assert that an array contains at least one element matching a partial object,
+use `+exists` as a single-key map under the array field. The inner fields use the
+full assertion vocabulary (exact value, `+type`, variable references, etc.):
+
+```yaml
+assert:
+  body:
+    posts:
+      +exists:
+        id: ${new-post.response.post_id}
+        title: +str
+```
+
+The assertion passes if **some** element matches all of the inner field
+assertions. To pull a specific element out by position instead, index it in a
+[variable reference](variables.md#array-indexing) (`$list.response.posts.0.id`).
 
 ---
 

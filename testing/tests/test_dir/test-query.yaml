@@ -1,0 +1,34 @@
+test-query-echoes-value:
+  setup: create-user
+  steps:
+    - path: /api/user/search
+      query:
+        q: $setup.username
+      assert:
+        status-code: 200
+        body:
+          query: $setup.username
+          results:
+            +exists:
+              name: $setup.username
+
+test-query-interpolated-literal-mix:
+  steps:
+    - path: /api/user/search
+      query:
+        q: "no-such-user-zzz"
+      assert:
+        status-code: 200
+        body:
+          query: "no-such-user-zzz"
+          len(results): "=0"
+
+# designed to fail: wrong echoed query value
+test-query-wrong-echo-fail:
+  steps:
+    - path: /api/user/search
+      query:
+        q: "alpha"
+      assert:
+        body:
+          query: "beta"

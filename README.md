@@ -43,6 +43,16 @@ test-create-and-get-post:
 
 `setup` runs a reusable step-set (defined in a config file) before the test begins. `$setup.token` and `$create-post.response.post_id` reference values from earlier steps — no glue code required.
 
+## Features
+
+- **Multi-step flows** with `$variable` references (bare or `${...}`) to earlier responses, request bodies, and setup data — inline anywhere a string appears.
+- **Reusable step-sets** for shared setup/teardown, optionally parameterized with `args` (`$args.<key>`).
+- **Rich assertions** — status codes (exact, wildcard, or list), typed fields (`+str`, `+int`, …), presence/absence/null (`+exists`, `+absent`, `+null`), numeric comparisons (`>=1`), regex, length, array membership (`+exists`) and indexing, response headers, and request duration.
+- **Hierarchical config** — base URLs and variables (literal, env-var, or regex-generated) that chain from parent directories.
+- **Auto-encoded query strings**, per-step `wait`/`retry`, parallel execution, group/name filtering, and CTRF reports.
+
+Full documentation: **[cd-4.github.io/yapitest](https://cd-4.github.io/yapitest)**.
+
 ## Installation
 
 Install with [Cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html):

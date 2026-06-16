@@ -10,9 +10,36 @@ use std::sync::{Arc, RwLock};
 
 use crate::config::{ConfigData, ConfigSpec, TestStepGroupReference};
 use crate::test_step::{
-    AssertionResult, RunnableTestStep, TestStep, TestStepFailureReason, TestStepResult,
-    TestStepSpec,
+    resolve_value, AssertionResult, RunnableTestStep, TestStep, TestStepFailureReason,
+    TestStepResult, TestStepSpec,
 };
+
+/// How a step-set is invoked: either a bare name, or a name plus `args` that
+/// become an `$args.*` namespace inside the step-set.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum StepSetInvocation {
+    Name(String),
+    Detailed {
+        name: String,
+        #[serde(default)]
+        args: HashMap<String, String>,
+    },
+}
+
+/// Resolve each arg value in the caller's scope, producing a JSON object to
+/// inject as `$args`.
+fn resolve_args(
+    args: &HashMap<String, String>,
+    config: &Option<Arc<RwLock<ConfigData>>>,
+    prior_steps: &HashMap<String, TestStepResult>,
+) -> Result<serde_json::Value> {
+    let mut map = serde_json::Map::new();
+    for (k, v) in args {
+        map.insert(k.clone(), resolve_value(v, config, prior_steps)?);
+    }
+    Ok(serde_json::Value::Object(map))
+}
 
 #[derive(Clone)]
 pub struct Test {
@@ -20,16 +47,16 @@ pub struct Test {
     path: PathBuf,
     pub config: Option<Arc<RwLock<ConfigData>>>,
     pub groups: Option<Vec<String>>,
-    setup: Option<String>,
-    teardown: Option<String>,
+    setup: Option<StepSetInvocation>,
+    teardown: Option<StepSetInvocation>,
     steps: Vec<Arc<RwLock<dyn RunnableTestStep + Send + Sync>>>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct TestSpec {
-    setup: Option<String>,
-    teardown: Option<String>,
+    setup: Option<StepSetInvocation>,
+    teardown: Option<StepSetInvocation>,
     steps: Vec<Value>,
     config: Option<ConfigSpec>,
     groups: Option<Vec<String>>,
@@ -391,9 +418,28 @@ impl Test {
         }
 
         // Setup
-        if let (Some(setup_id), Some(cfg)) = (self.setup.as_deref(), &self.config) {
-            match cfg.read().unwrap().get_step_group(setup_id) {
-                Ok(setup) => match setup.run(&self.config, &prior_steps).await {
+        if let (Some(setup_inv), Some(cfg)) = (&self.setup, &self.config) {
+            let (setup_name, raw_args) = match setup_inv {
+                StepSetInvocation::Name(n) => (n.clone(), HashMap::new()),
+                StepSetInvocation::Detailed { name, args } => (name.clone(), args.clone()),
+            };
+            let resolved_args = if raw_args.is_empty() {
+                None
+            } else {
+                match resolve_args(&raw_args, &self.config, &prior_steps) {
+                    Ok(a) => Some(a),
+                    Err(e) => fail!(TestStepResult::make_failure(
+                        Some("setup"),
+                        TestStepFailureReason::Miscellaneous,
+                        format!("setup args could not be resolved: {}", e),
+                    )),
+                }
+            };
+            match cfg.read().unwrap().get_step_group(&setup_name) {
+                Ok(setup) => match setup
+                    .run_with_args(&self.config, &prior_steps, resolved_args)
+                    .await
+                {
                     Ok(result) => {
                         prior_steps.insert("setup".to_owned(), result.clone());
                         completed_steps.push(result);
@@ -437,9 +483,28 @@ impl Test {
         }
 
         // Teardown
-        if let (Some(teardown_id), Some(cfg)) = (self.teardown.as_deref(), &self.config) {
-            match cfg.read().unwrap().get_step_group(teardown_id) {
-                Ok(teardown) => match teardown.run(&self.config, &prior_steps).await {
+        if let (Some(teardown_inv), Some(cfg)) = (&self.teardown, &self.config) {
+            let (teardown_name, raw_args) = match teardown_inv {
+                StepSetInvocation::Name(n) => (n.clone(), HashMap::new()),
+                StepSetInvocation::Detailed { name, args } => (name.clone(), args.clone()),
+            };
+            let resolved_args = if raw_args.is_empty() {
+                None
+            } else {
+                match resolve_args(&raw_args, &self.config, &prior_steps) {
+                    Ok(a) => Some(a),
+                    Err(e) => fail!(TestStepResult::make_failure(
+                        Some("teardown"),
+                        TestStepFailureReason::Miscellaneous,
+                        format!("teardown args could not be resolved: {}", e),
+                    )),
+                }
+            };
+            match cfg.read().unwrap().get_step_group(&teardown_name) {
+                Ok(teardown) => match teardown
+                    .run_with_args(&self.config, &prior_steps, resolved_args)
+                    .await
+                {
                     Ok(result) => {
                         prior_steps.insert("teardown".to_owned(), result.clone());
                         completed_steps.push(result);

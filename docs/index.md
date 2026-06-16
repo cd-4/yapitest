@@ -4,6 +4,18 @@ Yapitest is an API testing framework where tests are written entirely in YAML. I
 
 ---
 
+## Features
+
+- **Multi-step flows** — chain requests and reference earlier responses, request bodies, and setup data with [`$variable`](variables.md) references (bare or `${...}`, inline anywhere a string appears).
+- **Reusable step-sets** — share setup, teardown, and common sequences across tests, optionally [parameterized with `args`](config.md#parameterized-step-sets-args).
+- **Rich assertions** — [status codes](tests.md#status-code) (exact, wildcard, or a list), [typed body fields](tests.md#type-assertions), [presence/absence/null](tests.md#presence-assertions-exists-absent), [numeric comparisons](tests.md#numeric-value-comparisons), [regex](tests.md#regex-assertions), [length](tests.md#size-assertions-len), [array membership and indexing](tests.md#array-membership-exists), response [headers](tests.md#headers), and request [duration](tests.md#duration).
+- **Hierarchical config** — base URLs, variables (literal, env-var, or regex-generated), and step-sets that chain from parent directories.
+- **Query strings** — a variable-friendly, auto-encoded [`query`](tests.md#query-optional) map.
+- **Resilience** — per-step [`wait-before` / `wait-after` / `retry`](tests.md#wait-before-optional) for polling slow endpoints.
+- **Parallel & filterable** — run across threads and filter by group, name, or substring (see the [CLI reference](#cli-reference)).
+
+---
+
 ## Installation
 
 Install with [Cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html):
